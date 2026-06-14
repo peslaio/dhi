@@ -1,0 +1,85 @@
+name: Build RabbitMQ image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/reusable-build-debian-image.yml
+      - .github/workflows/reusable-publish-image-manifest.yml
+      - .github/workflows/rabbitmq-image.yml
+      - images/rabbitmq/**
+  pull_request:
+    paths:
+      - .github/workflows/reusable-build-debian-image.yml
+      - .github/workflows/reusable-publish-image-manifest.yml
+      - .github/workflows/rabbitmq-image.yml
+      - images/rabbitmq/**
+  workflow_dispatch:
+    inputs:
+      push:
+        description: Push to the configured registry after build, smoke test, SBOM, and scan.
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: rabbitmq-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rabbitmq:
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - debian_arch: amd64
+            platform: linux/amd64
+          - debian_arch: arm64
+            platform: linux/arm64
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/reusable-build-debian-image.yml
+    with:
+      image_name: rabbitmq
+      image_version: "3.10"
+      debian_suite: bookworm
+      debian_arch: ${{ matrix.target.debian_arch }}
+      platform: ${{ matrix.target.platform }}
+      packages: ca-certificates,rabbitmq-server
+      cmd: '["/usr/sbin/rabbitmq-server","--version"]'
+      workdir: /var/lib/rabbitmq
+      exposed_ports: "5672 15672"
+      runtime_user_name: rabbitmq
+      runtime_home: /var/lib/rabbitmq
+      environment: |
+        HOME=/var/lib/rabbitmq
+        RABBITMQ_MNESIA_BASE=/var/lib/rabbitmq/mnesia
+      writable_paths: /var/lib/rabbitmq /run/rabbitmq /var/log/rabbitmq
+      smoke_mode: oneshot
+      smoke_command: /usr/sbin/rabbitmq-server --version
+      push_primary_tag: false
+      push: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.push) }}
+      generate_sbom: true
+      scan: true
+      fail_on_vulnerabilities: true
+      sign: true
+    secrets: inherit
+
+  rabbitmq-manifest:
+    needs: rabbitmq
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.push) }}
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/reusable-publish-image-manifest.yml
+    with:
+      image_name: rabbitmq
+      image_version: "3.10"
+      debian_suite: bookworm
+      sign: true
+    secrets: inherit

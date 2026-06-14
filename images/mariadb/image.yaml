@@ -1,0 +1,62 @@
+name: mariadb
+version: "10.11"
+profile: runtime
+
+base:
+  distribution: debian
+  suite: bookworm
+  architectures:
+    - amd64
+    - arm64
+  mirror: http://deb.debian.org/debian
+  securityMirror: http://security.debian.org/debian-security
+  variant: minbase
+
+packages:
+  install:
+    - ca-certificates
+    - mariadb-server
+  remove:
+    - apt
+
+user:
+  name: mysql
+  uid: 10001
+  gid: 0
+  home: /var/lib/mysql
+  shell: /usr/sbin/nologin
+
+paths:
+  - path: /var/lib/mysql
+    owner: 10001:0
+    mode: "0770"
+  - path: /run/mysqld
+    owner: 10001:0
+    mode: "0770"
+  - path: /var/log/mysql
+    owner: 10001:0
+    mode: "0770"
+
+cmd:
+  - /usr/sbin/mariadbd
+  - --version
+
+ports:
+  - 3306
+
+hardening:
+  removeApt: true
+  removeDpkg: false
+  cleanAptCache: true
+  cleanDocs: true
+  cleanManPages: true
+  cleanLogs: true
+  cleanTmp: true
+  runAsNonRoot: true
+  openshiftCompatible: true
+
+oci:
+  registry: ghcr.io
+  namespace: ""
+  image: mariadb
+  tag: "10.11-bookworm"

@@ -1,0 +1,158 @@
+nameOverride: ""
+fullnameOverride: ""
+commonLabels: {}
+commonAnnotations: {}
+
+replicaCount: 1
+workload:
+  type: statefulset
+updateStrategy:
+  type: RollingUpdate
+
+image:
+  registry: ghcr.io
+  repository: tpesla/redis
+  tag: 7.0-bookworm
+  digest: ""
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  automountServiceAccountToken: false
+
+podLabels: {}
+podAnnotations: {}
+podSecurityContext:
+  enabled: true
+  fsGroup: 0
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  enabled: true
+  runAsUser: 10001
+  runAsGroup: 0
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop:
+      - ALL
+
+command: []
+args: []
+env: {}
+extraEnvVars: []
+extraEnvVarsCM: ""
+extraEnvVarsSecret: ""
+extraEnvFrom: []
+
+containerPorts:
+  - name: redis
+    containerPort: 6379
+    protocol: TCP
+service:
+  enabled: true
+  type: ClusterIP
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+      protocol: TCP
+  annotations: {}
+
+config:
+  enabled: true
+  filename: redis.conf
+  mountPath: /etc/redis/redis.conf
+  data:
+    redis.conf: |
+      bind 0.0.0.0
+      port 6379
+      protected-mode no
+      daemonize no
+      supervised no
+      dir /data
+      pidfile /run/redis/redis-server.pid
+      logfile ""
+      appendonly yes
+      save ""
+
+persistence:
+  enabled: true
+  volumeClaimTemplate: true
+  existingClaim: ""
+  storageClass: ""
+  annotations: {}
+  accessModes:
+    - ReadWriteOnce
+  size: 8Gi
+  mountPath: /data
+
+emptyDirs: []
+extraVolumes: []
+extraVolumeMounts: []
+initContainers: []
+sidecars: []
+resources: {}
+lifecycle: {}
+
+livenessProbe:
+  enabled: true
+  tcpSocket:
+    port: redis
+  initialDelaySeconds: 20
+  periodSeconds: 10
+readinessProbe:
+  enabled: true
+  tcpSocket:
+    port: redis
+  initialDelaySeconds: 5
+  periodSeconds: 10
+startupProbe:
+  enabled: false
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+pdb:
+  create: false
+  minAvailable: ""
+  maxUnavailable: 1
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts: []
+  tls: []
+
+openshift:
+  enabled: false
+
+metrics:
+  enabled: false
+
+networkPolicy:
+  enabled: false
+  allowExternal: true
+  ingress: []
+  egress: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+priorityClassName: ""

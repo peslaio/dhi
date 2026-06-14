@@ -1,0 +1,64 @@
+name: dotnet-runtime
+version: "10.0"
+profile: runtime
+
+base:
+  distribution: debian
+  suite: bookworm
+  architectures:
+    - amd64
+    - arm64
+  mirror: http://deb.debian.org/debian
+  securityMirror: http://security.debian.org/debian-security
+  variant: minbase
+
+repositories:
+  - name: microsoft-prod
+    key: https://packages.microsoft.com/keys/microsoft.asc
+    source: deb [arch=amd64,arm64] https://packages.microsoft.com/debian/12/prod bookworm main
+
+packages:
+  install:
+    - ca-certificates
+    - dotnet-runtime-10.0
+  remove:
+    - apt
+
+user:
+  name: dotnet
+  uid: 10001
+  gid: 0
+  home: /home/dotnet
+  shell: /usr/sbin/nologin
+
+paths:
+  - path: /app
+    owner: 10001:0
+    mode: "0770"
+  - path: /home/dotnet
+    owner: 10001:0
+    mode: "0770"
+
+cmd:
+  - /usr/bin/dotnet
+  - --info
+
+environment:
+  DOTNET_RUNNING_IN_CONTAINER: "true"
+
+hardening:
+  removeApt: true
+  removeDpkg: false
+  cleanAptCache: true
+  cleanDocs: true
+  cleanManPages: true
+  cleanLogs: true
+  cleanTmp: true
+  runAsNonRoot: true
+  openshiftCompatible: true
+
+oci:
+  registry: ghcr.io
+  namespace: ""
+  image: dotnet-runtime
+  tag: "10.0-bookworm"

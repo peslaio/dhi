@@ -1,0 +1,10 @@
+apiVersion: v2
+name: node
+description: Node.js workload chart for the Debian Image Forge hardened image.
+type: application
+version: 0.1.0
+appVersion: "18"
+dependencies:
+  - name: dhi-common
+    version: 0.1.0
+    repository: file://../dhi-common

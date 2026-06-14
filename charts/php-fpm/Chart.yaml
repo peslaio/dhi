@@ -1,0 +1,10 @@
+apiVersion: v2
+name: php-fpm
+description: PHP-FPM chart for the Debian Image Forge hardened image.
+type: application
+version: 0.1.0
+appVersion: "8.2"
+dependencies:
+  - name: dhi-common
+    version: 0.1.0
+    repository: file://../dhi-common

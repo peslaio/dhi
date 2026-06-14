@@ -1,0 +1,170 @@
+nameOverride: ""
+fullnameOverride: ""
+commonLabels: {}
+commonAnnotations: {}
+
+replicaCount: 1
+workload:
+  type: statefulset
+updateStrategy:
+  type: RollingUpdate
+
+image:
+  registry: ghcr.io
+  repository: tpesla/rabbitmq
+  tag: 3.10-bookworm
+  digest: ""
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  automountServiceAccountToken: false
+
+podLabels: {}
+podAnnotations: {}
+podSecurityContext:
+  enabled: true
+  fsGroup: 0
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  enabled: true
+  runAsUser: 10001
+  runAsGroup: 0
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop:
+      - ALL
+
+command:
+  - /usr/sbin/rabbitmq-server
+args: []
+env:
+  HOME: /var/lib/rabbitmq
+  RABBITMQ_MNESIA_BASE: /var/lib/rabbitmq/mnesia
+extraEnvVars: []
+extraEnvVarsCM: ""
+extraEnvVarsSecret: ""
+extraEnvFrom: []
+
+containerPorts:
+  - name: amqp
+    containerPort: 5672
+    protocol: TCP
+  - name: management
+    containerPort: 15672
+    protocol: TCP
+service:
+  enabled: true
+  type: ClusterIP
+  ports:
+    - name: amqp
+      port: 5672
+      targetPort: amqp
+      protocol: TCP
+    - name: management
+      port: 15672
+      targetPort: management
+      protocol: TCP
+  annotations: {}
+
+config:
+  enabled: false
+  filename: rabbitmq.conf
+  mountPath: /etc/rabbitmq/rabbitmq.conf
+  data: {}
+
+persistence:
+  enabled: true
+  volumeClaimTemplate: true
+  existingClaim: ""
+  storageClass: ""
+  annotations: {}
+  accessModes:
+    - ReadWriteOnce
+  size: 8Gi
+  mountPath: /var/lib/rabbitmq
+
+emptyDirs:
+  - name: run
+    mountPath: /run/rabbitmq
+  - name: logs
+    mountPath: /var/log/rabbitmq
+extraVolumes: []
+extraVolumeMounts: []
+initContainers: []
+sidecars: []
+resources: {}
+lifecycle: {}
+
+livenessProbe:
+  enabled: true
+  tcpSocket:
+    port: amqp
+  initialDelaySeconds: 30
+  periodSeconds: 10
+readinessProbe:
+  enabled: true
+  tcpSocket:
+    port: amqp
+  initialDelaySeconds: 10
+  periodSeconds: 10
+startupProbe:
+  enabled: true
+  tcpSocket:
+    port: amqp
+  failureThreshold: 60
+  periodSeconds: 5
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+pdb:
+  create: false
+  minAvailable: ""
+  maxUnavailable: 1
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: rabbitmq.local
+      paths:
+        - path: /
+          pathType: Prefix
+          servicePort: management
+  tls: []
+
+openshift:
+  enabled: false
+
+metrics:
+  enabled: false
+
+networkPolicy:
+  enabled: false
+  allowExternal: true
+  ingress: []
+  egress: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+priorityClassName: ""

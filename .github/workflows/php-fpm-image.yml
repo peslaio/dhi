@@ -1,0 +1,100 @@
+name: Build PHP-FPM image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/reusable-build-debian-image.yml
+      - .github/workflows/reusable-publish-image-manifest.yml
+      - .github/workflows/php-fpm-image.yml
+      - images/php-fpm/**
+  pull_request:
+    paths:
+      - .github/workflows/reusable-build-debian-image.yml
+      - .github/workflows/reusable-publish-image-manifest.yml
+      - .github/workflows/php-fpm-image.yml
+      - images/php-fpm/**
+  workflow_dispatch:
+    inputs:
+      push:
+        description: Push to the configured registry after build, smoke test, SBOM, and scan.
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: php-fpm-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  php-fpm:
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - debian_arch: amd64
+            platform: linux/amd64
+          - debian_arch: arm64
+            platform: linux/arm64
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/reusable-build-debian-image.yml
+    with:
+      image_name: php-fpm
+      image_version: "8.2"
+      debian_suite: bookworm
+      debian_arch: ${{ matrix.target.debian_arch }}
+      platform: ${{ matrix.target.platform }}
+      packages: ca-certificates,php8.2-fpm
+      runtime_closure: true
+      runtime_closure_binaries: |
+        /usr/sbin/php-fpm8.2
+        /usr/lib/php/*/*.so
+      runtime_closure_paths: |
+        /etc/php
+        /etc/php-fpm
+        /etc/ssl/certs
+        /usr/share/php8.2-common
+        /usr/share/php8.2-fpm
+        /usr/share/zoneinfo
+      forbidden_packages: apt,libapt-pkg6.0,debian-archive-keyring,gpgv,bash,dash,dpkg
+      allowed_packages: ca-certificates,libc6,libcap2,libgcc-s1,libgpg-error0,liblzma5,php8.2-common,php8.2-fpm,tzdata,zlib1g
+      config_path: images/php-fpm/php-fpm.conf
+      entrypoint: '["/usr/sbin/php-fpm8.2"]'
+      cmd: '["-F","-O","-y","/etc/php-fpm/php-fpm.conf"]'
+      workdir: /var/www/html
+      exposed_ports: "9000"
+      runtime_user_name: php
+      runtime_home: /var/www/html
+      writable_paths: /run/php-fpm /var/log/php8.2-fpm /var/www/html
+      smoke_mode: running
+      smoke_tcp_port: "9000"
+      smoke_command: /usr/sbin/php-fpm8.2 -tt -y /etc/php-fpm/php-fpm.conf
+      smoke_expected_output: "test is successful"
+      remove_shell: true
+      push_primary_tag: false
+      push: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.push) }}
+      generate_sbom: true
+      scan: true
+      fail_on_vulnerabilities: true
+      sign: true
+    secrets: inherit
+
+  php-fpm-manifest:
+    needs: php-fpm
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.push) }}
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/reusable-publish-image-manifest.yml
+    with:
+      image_name: php-fpm
+      image_version: "8.2"
+      debian_suite: bookworm
+      sign: true
+    secrets: inherit

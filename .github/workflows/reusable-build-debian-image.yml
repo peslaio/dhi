@@ -1,0 +1,1012 @@
+name: Reusable Debian image build
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        description: OCI image name, for example redis.
+        required: true
+        type: string
+      image_version:
+        description: Application version used in tags.
+        required: true
+        type: string
+      debian_suite:
+        description: Debian suite to build from.
+        required: false
+        default: trixie
+        type: string
+      debian_arch:
+        description: Debian architecture passed to mmdebstrap.
+        required: false
+        default: amd64
+        type: string
+      platform:
+        description: Docker platform for the built image.
+        required: false
+        default: linux/amd64
+        type: string
+      packages:
+        description: Comma-separated Debian package list installed during rootfs bootstrap.
+        required: true
+        type: string
+      post_packages:
+        description: Comma-separated package list installed after extra apt repositories are configured.
+        required: false
+        default: ""
+        type: string
+      runtime_closure:
+        description: Copy only explicit runtime files and ELF dependency closures into the final rootfs.
+        required: false
+        default: false
+        type: boolean
+      runtime_closure_binaries:
+        description: Space-separated absolute binaries/shared objects copied with their linked ELF dependencies when runtime_closure is enabled.
+        required: false
+        default: ""
+        type: string
+      runtime_closure_paths:
+        description: Whitespace-separated absolute paths or glob patterns copied into the final rootfs when runtime_closure is enabled.
+        required: false
+        default: ""
+        type: string
+      forbidden_packages:
+        description: Comma-separated package names that must not appear in the final rootfs dpkg status database.
+        required: false
+        default: ""
+        type: string
+      allowed_packages:
+        description: Comma-separated package names that are allowed in the final rootfs dpkg status database. When set, the package set must match exactly.
+        required: false
+        default: ""
+        type: string
+      extra_apt_key_urls:
+        description: Newline-separated apt signing key URLs installed into the rootfs trusted keyring.
+        required: false
+        default: ""
+        type: string
+      extra_apt_sources:
+        description: Newline-separated apt source lines installed into the rootfs before post_packages.
+        required: false
+        default: ""
+        type: string
+      registry:
+        description: OCI registry host.
+        required: false
+        default: ghcr.io
+        type: string
+      namespace:
+        description: Registry namespace. Defaults to the repository owner when empty.
+        required: false
+        default: ""
+        type: string
+      debian_mirror:
+        description: Debian package mirror.
+        required: false
+        default: http://deb.debian.org/debian
+        type: string
+      debian_security_mirror:
+        description: Debian security package mirror.
+        required: false
+        default: http://security.debian.org/debian-security
+        type: string
+      entrypoint:
+        description: Dockerfile ENTRYPOINT as a JSON array.
+        required: false
+        default: "[]"
+        type: string
+      cmd:
+        description: Dockerfile CMD as a JSON array.
+        required: false
+        default: "[]"
+        type: string
+      workdir:
+        description: Container working directory.
+        required: false
+        default: /
+        type: string
+      exposed_ports:
+        description: Space-separated list of ports to expose.
+        required: false
+        default: ""
+        type: string
+      environment:
+        description: Newline-separated Dockerfile ENV entries formatted as KEY=value.
+        required: false
+        default: ""
+        type: string
+      config_path:
+        description: Optional repository path copied to /etc/<image_name>/<image_name>.conf.
+        required: false
+        default: ""
+        type: string
+      run_user:
+        description: Runtime USER value.
+        required: false
+        default: "10001:0"
+        type: string
+      runtime_user_name:
+        description: Name to write to /etc/passwd. Defaults to image_name when empty.
+        required: false
+        default: ""
+        type: string
+      runtime_home:
+        description: Home directory to write to /etc/passwd.
+        required: false
+        default: "/data"
+        type: string
+      runtime_shell:
+        description: Login shell to write to /etc/passwd.
+        required: false
+        default: "/usr/sbin/nologin"
+        type: string
+      run_uid:
+        description: Runtime numeric UID used for filesystem ownership.
+        required: false
+        default: "10001"
+        type: string
+      run_gid:
+        description: Runtime numeric GID used for filesystem ownership.
+        required: false
+        default: "0"
+        type: string
+      writable_paths:
+        description: Space-separated paths that should be writable by the runtime user/group.
+        required: false
+        default: "/data"
+        type: string
+      smoke_command:
+        description: Optional command to execute inside the running container during smoke test.
+        required: false
+        default: ""
+        type: string
+      smoke_expected_output:
+        description: Optional text expected in smoke command output.
+        required: false
+        default: ""
+        type: string
+      smoke_mode:
+        description: Smoke test mode. Use running for daemons and oneshot for command images.
+        required: false
+        default: running
+        type: string
+      smoke_startup_timeout_seconds:
+        description: Seconds to wait for a daemon container to stay running and pass network smoke checks.
+        required: false
+        default: "30"
+        type: string
+      smoke_http_port:
+        description: Optional container TCP port to publish and check with HTTP during running smoke tests.
+        required: false
+        default: ""
+        type: string
+      smoke_http_path:
+        description: Optional HTTP path to request during running smoke tests.
+        required: false
+        default: ""
+        type: string
+      smoke_http_expected_status:
+        description: Expected HTTP status code for smoke_http_path.
+        required: false
+        default: "200"
+        type: string
+      smoke_http_expected_body:
+        description: Optional text expected in the HTTP response body.
+        required: false
+        default: ""
+        type: string
+      smoke_tcp_port:
+        description: Optional container TCP port to publish and check for connectivity during running smoke tests.
+        required: false
+        default: ""
+        type: string
+      remove_shell:
+        description: Remove common shell binaries from the runtime rootfs.
+        required: false
+        default: false
+        type: boolean
+      push:
+        description: Push the image to the registry after local build and smoke test.
+        required: false
+        default: false
+        type: boolean
+      push_primary_tag:
+        description: Push the non-architecture tag from this build. Disable for matrix builds that publish a manifest later.
+        required: false
+        default: true
+        type: boolean
+      generate_sbom:
+        description: Generate an SPDX JSON SBOM with Syft.
+        required: false
+        default: true
+        type: boolean
+      scan:
+        description: Scan the image with Trivy.
+        required: false
+        default: true
+        type: boolean
+      fail_on_vulnerabilities:
+        description: Fail when Trivy finds HIGH or CRITICAL vulnerabilities.
+        required: false
+        default: true
+        type: boolean
+      trivyignores:
+        description: Comma-separated paths to Trivy ignore files.
+        required: false
+        default: ""
+        type: string
+      sign:
+        description: Sign the pushed image digest with cosign keyless signing.
+        required: false
+        default: true
+        type: boolean
+    secrets:
+      registry_username:
+        required: false
+      registry_password:
+        required: false
+    outputs:
+      image_ref:
+        description: Registry image reference without a tag.
+        value: ${{ jobs.build.outputs.image_ref }}
+      primary_tag:
+        description: Primary image tag.
+        value: ${{ jobs.build.outputs.primary_tag }}
+      digest:
+        description: Pushed image digest, when push is enabled.
+        value: ${{ jobs.build.outputs.digest }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    outputs:
+      image_ref: ${{ steps.meta.outputs.image_ref }}
+      primary_tag: ${{ steps.meta.outputs.primary_tag }}
+      digest: ${{ steps.publish.outputs.digest }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up QEMU
+        if: inputs.debian_arch != 'amd64'
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: ${{ inputs.debian_arch == 'arm64' && 'arm64' || 'all' }}
+
+      - name: Install rootfs build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mmdebstrap arch-test ca-certificates curl gnupg debian-archive-keyring qemu-user-static binfmt-support
+
+      - name: Prepare image metadata
+        id: meta
+        env:
+          REGISTRY: ${{ inputs.registry }}
+          NAMESPACE: ${{ inputs.namespace }}
+          IMAGE_NAME: ${{ inputs.image_name }}
+          IMAGE_VERSION: ${{ inputs.image_version }}
+          DEBIAN_SUITE: ${{ inputs.debian_suite }}
+          DEBIAN_ARCH: ${{ inputs.debian_arch }}
+        run: |
+          set -euo pipefail
+          namespace="${NAMESPACE:-$GITHUB_REPOSITORY_OWNER}"
+          image_ref="${REGISTRY}/${namespace}/${IMAGE_NAME}"
+          image_ref="$(printf '%s' "$image_ref" | tr '[:upper:]' '[:lower:]')"
+          primary_tag="${image_ref}:${IMAGE_VERSION}-${DEBIAN_SUITE}"
+          arch_tag="${image_ref}:${IMAGE_VERSION}-${DEBIAN_SUITE}-${DEBIAN_ARCH}"
+
+          {
+            echo "image_ref=$image_ref"
+            echo "primary_tag=$primary_tag"
+            echo "arch_tag=$arch_tag"
+            echo "tags<<EOF"
+            echo "$primary_tag"
+            echo "$arch_tag"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and harden Debian rootfs
+        env:
+          IMAGE_NAME: ${{ inputs.image_name }}
+          DEBIAN_SUITE: ${{ inputs.debian_suite }}
+          DEBIAN_ARCH: ${{ inputs.debian_arch }}
+          DEBIAN_MIRROR: ${{ inputs.debian_mirror }}
+          DEBIAN_SECURITY_MIRROR: ${{ inputs.debian_security_mirror }}
+          PACKAGES: ${{ inputs.packages }}
+          POST_PACKAGES: ${{ inputs.post_packages }}
+          RUNTIME_CLOSURE: ${{ inputs.runtime_closure }}
+          RUNTIME_CLOSURE_BINARIES: ${{ inputs.runtime_closure_binaries }}
+          RUNTIME_CLOSURE_PATHS: ${{ inputs.runtime_closure_paths }}
+          FORBIDDEN_PACKAGES: ${{ inputs.forbidden_packages }}
+          ALLOWED_PACKAGES: ${{ inputs.allowed_packages }}
+          EXTRA_APT_KEY_URLS: ${{ inputs.extra_apt_key_urls }}
+          EXTRA_APT_SOURCES: ${{ inputs.extra_apt_sources }}
+          CONFIG_PATH: ${{ inputs.config_path }}
+          RUNTIME_USER_NAME: ${{ inputs.runtime_user_name }}
+          RUNTIME_HOME: ${{ inputs.runtime_home }}
+          RUNTIME_SHELL: ${{ inputs.runtime_shell }}
+          RUN_UID: ${{ inputs.run_uid }}
+          RUN_GID: ${{ inputs.run_gid }}
+          WRITABLE_PATHS: ${{ inputs.writable_paths }}
+          REMOVE_SHELL: ${{ inputs.remove_shell }}
+        run: |
+          set -euo pipefail
+
+          build_dir="$GITHUB_WORKSPACE/.build/${IMAGE_NAME}"
+          rootfs="$build_dir/rootfs"
+          security_suite="${DEBIAN_SUITE}-security"
+          host_arch="$(dpkg --print-architecture)"
+          qemu_binary=""
+
+          rm -rf "$build_dir"
+          mkdir -p "$rootfs"
+
+          sudo mmdebstrap \
+            --variant=minbase \
+            --architectures="$DEBIAN_ARCH" \
+            --keyring=/usr/share/keyrings/debian-archive-keyring.gpg \
+            --include="$PACKAGES" \
+            "$DEBIAN_SUITE" \
+            "$rootfs" \
+            "deb $DEBIAN_MIRROR $DEBIAN_SUITE main" \
+            "deb $DEBIAN_SECURITY_MIRROR $security_suite main"
+
+          if [ "$DEBIAN_ARCH" != "$host_arch" ]; then
+            case "$DEBIAN_ARCH" in
+              arm64) qemu_binary=/usr/bin/qemu-aarch64-static ;;
+              amd64) qemu_binary=/usr/bin/qemu-x86_64-static ;;
+              *)
+                echo "Unsupported foreign architecture for chroot execution: $DEBIAN_ARCH" >&2
+                exit 1
+                ;;
+            esac
+            sudo install -m 0755 "$qemu_binary" "$rootfs$qemu_binary"
+          fi
+
+          if [ -n "$EXTRA_APT_KEY_URLS" ] || [ -n "$EXTRA_APT_SOURCES" ]; then
+            sudo mkdir -p "$rootfs/etc/apt/trusted.gpg.d" "$rootfs/etc/apt/sources.list.d"
+
+            key_index=0
+            while IFS= read -r key_url; do
+              [ -n "$key_url" ] || continue
+              key_index=$((key_index + 1))
+              curl -fsSL "$key_url" | gpg --dearmor | sudo tee "$rootfs/etc/apt/trusted.gpg.d/dif-extra-${key_index}.gpg" >/dev/null
+            done <<< "$EXTRA_APT_KEY_URLS"
+
+            sudo rm -f "$rootfs/etc/apt/sources.list.d/dif-extra.list"
+            while IFS= read -r source_line; do
+              [ -n "$source_line" ] || continue
+              printf '%s\n' "$source_line" | sudo tee -a "$rootfs/etc/apt/sources.list.d/dif-extra.list" >/dev/null
+            done <<< "$EXTRA_APT_SOURCES"
+          fi
+
+          if [ -n "$POST_PACKAGES" ]; then
+            sudo chroot "$rootfs" apt-get update
+            post_packages="$(printf '%s' "$POST_PACKAGES" | tr ',' ' ')"
+            read -r -a post_package_args <<< "$post_packages"
+            sudo chroot "$rootfs" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${post_package_args[@]}"
+          fi
+
+          sudo mkdir -p "$rootfs/etc/$IMAGE_NAME"
+          if [ -n "$CONFIG_PATH" ]; then
+            sudo install -m 0640 "$CONFIG_PATH" "$rootfs/etc/$IMAGE_NAME/$IMAGE_NAME.conf"
+            sudo chown root:0 "$rootfs/etc/$IMAGE_NAME" "$rootfs/etc/$IMAGE_NAME/$IMAGE_NAME.conf"
+            sudo chmod 0750 "$rootfs/etc/$IMAGE_NAME"
+            sudo chmod 0640 "$rootfs/etc/$IMAGE_NAME/$IMAGE_NAME.conf"
+          fi
+
+          runtime_user_name="${RUNTIME_USER_NAME:-$IMAGE_NAME}"
+          if grep -q "^${runtime_user_name}:" "$rootfs/etc/passwd"; then
+            sudo sed -i -E "s#^${runtime_user_name}:x:[0-9]+:[0-9]+:([^:]*):[^:]*:[^:]*#${runtime_user_name}:x:${RUN_UID}:${RUN_GID}:\1:${RUNTIME_HOME}:${RUNTIME_SHELL}#" "$rootfs/etc/passwd"
+          else
+            echo "${runtime_user_name}:x:${RUN_UID}:${RUN_GID}:${runtime_user_name} runtime:${RUNTIME_HOME}:${RUNTIME_SHELL}" | sudo tee -a "$rootfs/etc/passwd" >/dev/null
+          fi
+
+          final_rootfs="$rootfs"
+          if [ "$RUNTIME_CLOSURE" = "true" ]; then
+            if [ -z "$RUNTIME_CLOSURE_BINARIES" ]; then
+              echo "runtime_closure=true requires runtime_closure_binaries." >&2
+              exit 1
+            fi
+
+            runtime_rootfs="$build_dir/runtime-rootfs"
+            runtime_packages="$build_dir/runtime-packages.txt"
+            copied_paths="$build_dir/runtime-copied-paths.txt"
+            rm -rf "$runtime_rootfs"
+            mkdir -p "$runtime_rootfs"
+            : > "$runtime_packages"
+            : > "$copied_paths"
+
+            record_runtime_package() {
+              local path="$1"
+              local matches
+              matches="$(sudo chroot "$rootfs" dpkg-query -S "$path" 2>/dev/null || true)"
+              if [ -n "$matches" ]; then
+                printf '%s\n' "$matches" \
+                  | sed 's/: .*//' \
+                  | tr ',' '\n' \
+                  | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/:.*//' \
+                  >> "$runtime_packages"
+              fi
+            }
+
+            copy_runtime_file() {
+              local path="$1"
+              local target target_path
+
+              path="$(realpath -sm "$path")"
+              if grep -Fxq "$path" "$copied_paths"; then
+                return
+              fi
+              if [ ! -e "$rootfs$path" ] && [ ! -L "$rootfs$path" ]; then
+                return
+              fi
+
+              printf '%s\n' "$path" >> "$copied_paths"
+              sudo mkdir -p "$runtime_rootfs$(dirname "$path")"
+              sudo cp -a "$rootfs$path" "$runtime_rootfs$path"
+              record_runtime_package "$path"
+
+              if [ -L "$rootfs$path" ]; then
+                target="$(readlink "$rootfs$path")"
+                case "$target" in
+                  /*) target_path="$target" ;;
+                  *) target_path="$(dirname "$path")/$target" ;;
+                esac
+                target_path="$(realpath -sm "$target_path")"
+                copy_runtime_file "$target_path"
+              fi
+            }
+
+            copy_runtime_path() {
+              local path="$1"
+              local child rel target target_path
+
+              path="$(realpath -sm "$path")"
+              if [ -d "$rootfs$path" ] && [ ! -L "$rootfs$path" ]; then
+                sudo mkdir -p "$runtime_rootfs$(dirname "$path")"
+                sudo cp -a "$rootfs$path" "$runtime_rootfs$path"
+                while IFS= read -r child; do
+                  rel="/${child#"$rootfs"/}"
+                  record_runtime_package "$rel"
+                  if [ -L "$child" ]; then
+                    target="$(readlink "$child")"
+                    case "$target" in
+                      /*) target_path="$target" ;;
+                      *) target_path="$(dirname "$rel")/$target" ;;
+                    esac
+                    target_path="$(realpath -sm "$target_path")"
+                    copy_runtime_file "$target_path"
+                  fi
+                done < <(sudo find "$rootfs$path" -xdev \( -type f -o -type l \) -print)
+              else
+                copy_runtime_file "$path"
+              fi
+            }
+
+            copy_elf_dependencies() {
+              local binary="$1"
+              local ldd_output lib
+
+              ldd_output="$(sudo chroot "$rootfs" /usr/bin/ldd "$binary" 2>&1 || true)"
+              if printf '%s\n' "$ldd_output" | grep -q "not a dynamic executable"; then
+                return
+              fi
+
+              while IFS= read -r lib; do
+                [ -n "$lib" ] || continue
+                copy_runtime_path "$lib"
+              done < <(
+                printf '%s\n' "$ldd_output" \
+                  | awk '/=> \// {print $3} /^[[:space:]]*\// {print $1}'
+              )
+            }
+
+            shopt -s nullglob dotglob
+            for binary_pattern in $RUNTIME_CLOSURE_BINARIES; do
+              binary_pattern_matched=false
+              for expanded in "$rootfs"$binary_pattern; do
+                binary_pattern_matched=true
+                binary="/${expanded#"$rootfs"/}"
+                copy_runtime_path "$binary"
+                copy_elf_dependencies "$binary"
+              done
+              if [ "$binary_pattern_matched" != "true" ]; then
+                echo "Runtime closure binary pattern did not match any files: $binary_pattern" >&2
+                exit 1
+              fi
+            done
+
+            for closure_path in $RUNTIME_CLOSURE_PATHS; do
+              for expanded in "$rootfs"$closure_path; do
+                rel="/${expanded#"$rootfs"/}"
+                copy_runtime_path "$rel"
+              done
+            done
+
+            for common_path in \
+              /etc/passwd \
+              /etc/group \
+              /etc/nsswitch.conf \
+              /etc/protocols \
+              /etc/services; do
+              copy_runtime_path "$common_path"
+            done
+
+            for nss_path in \
+              '/lib/*/libnss_*.so.2' \
+              '/lib/*/libresolv.so.2' \
+              '/usr/lib/*/libnss_*.so.2' \
+              '/usr/lib/*/libresolv.so.2'; do
+              for expanded in "$rootfs"$nss_path; do
+                rel="/${expanded#"$rootfs"/}"
+                copy_runtime_path "$rel"
+              done
+            done
+            shopt -u nullglob dotglob
+
+            sudo mkdir -p \
+              "$runtime_rootfs/dev" \
+              "$runtime_rootfs/proc" \
+              "$runtime_rootfs/sys" \
+              "$runtime_rootfs/tmp" \
+              "$runtime_rootfs/run" \
+              "$runtime_rootfs/var/tmp"
+            sudo chmod 1777 "$runtime_rootfs/tmp" "$runtime_rootfs/var/tmp"
+
+            sort -u "$runtime_packages" > "$runtime_packages.sorted"
+            sudo mkdir -p "$runtime_rootfs/var/lib/dpkg"
+            awk -v keep_file="$runtime_packages.sorted" '
+              BEGIN {
+                while ((getline package_name < keep_file) > 0) {
+                  keep[package_name] = 1
+                }
+                RS = ""
+                ORS = "\n\n"
+              }
+              {
+                package_name = ""
+                for (i = 1; i <= NF; i++) {
+                  if ($i == "Package:") {
+                    package_name = $(i + 1)
+                    break
+                  }
+                }
+                if (package_name in keep) {
+                  print
+                }
+              }
+            ' "$rootfs/var/lib/dpkg/status" | sudo tee "$runtime_rootfs/var/lib/dpkg/status" >/dev/null
+            sudo touch "$runtime_rootfs/var/lib/dpkg/available"
+
+            echo "Runtime closure package count: $(wc -l < "$runtime_packages.sorted")"
+            final_rootfs="$runtime_rootfs"
+          fi
+
+          sudo rm -rf \
+            "$final_rootfs/var/lib/apt/lists/"* \
+            "$final_rootfs/var/cache/apt/"* \
+            "$final_rootfs/usr/share/doc/"* \
+            "$final_rootfs/usr/share/man/"* \
+            "$final_rootfs/var/log/"* \
+            "$final_rootfs/tmp/"* \
+            "$final_rootfs/var/tmp/"*
+
+          sudo rm -f \
+            "$final_rootfs/usr/bin/apt" \
+            "$final_rootfs/usr/bin/apt-cache" \
+            "$final_rootfs/usr/bin/apt-config" \
+            "$final_rootfs/usr/bin/apt-get" \
+            "$final_rootfs/usr/bin/apt-key"
+
+          sudo mkdir -p "$final_rootfs/data" "$final_rootfs/run/$IMAGE_NAME" "$final_rootfs/var/lib/$IMAGE_NAME"
+          for path in $WRITABLE_PATHS; do
+            sudo mkdir -p "$final_rootfs$path"
+            sudo chown -R "$RUN_UID:$RUN_GID" "$final_rootfs$path"
+            sudo chmod -R g=u "$final_rootfs$path"
+          done
+
+          if [ "$REMOVE_SHELL" = "true" ]; then
+            sudo rm -f "$final_rootfs/bin/sh" "$final_rootfs/bin/bash" "$final_rootfs/usr/bin/bash"
+          fi
+
+          if [ -n "$qemu_binary" ]; then
+            sudo rm -f "$final_rootfs$qemu_binary"
+          fi
+
+          if [ -n "$FORBIDDEN_PACKAGES" ] && [ -f "$final_rootfs/var/lib/dpkg/status" ]; then
+            forbidden_found=""
+            for package_name in $(printf '%s' "$FORBIDDEN_PACKAGES" | tr ',' ' '); do
+              if awk -v package_name="$package_name" '
+                BEGIN { RS = "" }
+                $0 ~ ("(^|\n)Package: " package_name "(\n|$)") { found = 1 }
+                END { exit found ? 0 : 1 }
+              ' "$final_rootfs/var/lib/dpkg/status"; then
+                forbidden_found="${forbidden_found}${package_name} "
+              fi
+            done
+            if [ -n "$forbidden_found" ]; then
+              echo "Forbidden packages are present in final rootfs: $forbidden_found" >&2
+              exit 1
+            fi
+          fi
+
+          if [ -n "$ALLOWED_PACKAGES" ]; then
+            if [ ! -f "$final_rootfs/var/lib/dpkg/status" ]; then
+              echo "allowed_packages was provided, but final rootfs has no dpkg status database." >&2
+              exit 1
+            fi
+
+            actual_packages="$build_dir/final-packages.txt"
+            allowed_packages_file="$build_dir/allowed-packages.txt"
+            awk '/^Package: / { print $2 }' "$final_rootfs/var/lib/dpkg/status" | sort -u > "$actual_packages"
+            printf '%s\n' "$ALLOWED_PACKAGES" \
+              | tr ',' '\n' \
+              | tr '[:space:]' '\n' \
+              | sed '/^$/d' \
+              | sort -u > "$allowed_packages_file"
+
+            unexpected_packages="$(comm -23 "$actual_packages" "$allowed_packages_file" || true)"
+            missing_packages="$(comm -13 "$actual_packages" "$allowed_packages_file" || true)"
+
+            if [ -n "$unexpected_packages" ]; then
+              echo "Unexpected packages are present in final rootfs:" >&2
+              printf '%s\n' "$unexpected_packages" >&2
+              exit 1
+            fi
+
+            if [ -n "$missing_packages" ]; then
+              echo "Allowed package list contains packages missing from final rootfs:" >&2
+              printf '%s\n' "$missing_packages" >&2
+              exit 1
+            fi
+
+            echo "Validated final rootfs package allowlist: $(wc -l < "$actual_packages") packages"
+          fi
+
+          sudo tar --numeric-owner --xattrs --acls -C "$final_rootfs" -czf "$build_dir/rootfs.tar.gz" .
+          sudo chown "$USER" "$build_dir/rootfs.tar.gz"
+
+      - name: Generate Dockerfile
+        env:
+          IMAGE_NAME: ${{ inputs.image_name }}
+          IMAGE_VERSION: ${{ inputs.image_version }}
+          DEBIAN_SUITE: ${{ inputs.debian_suite }}
+          ENTRYPOINT_JSON: ${{ inputs.entrypoint }}
+          CMD_JSON: ${{ inputs.cmd }}
+          WORKDIR: ${{ inputs.workdir }}
+          EXPOSED_PORTS: ${{ inputs.exposed_ports }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          RUN_USER: ${{ inputs.run_user }}
+        run: |
+          set -euo pipefail
+          build_dir="$GITHUB_WORKSPACE/.build/${IMAGE_NAME}"
+          dockerfile="$build_dir/Dockerfile"
+
+          {
+            echo "FROM scratch"
+            echo "ADD rootfs.tar.gz /"
+            echo "ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+            while IFS= read -r env_line; do
+              [ -n "$env_line" ] || continue
+              echo "ENV $env_line"
+            done <<< "$ENVIRONMENT"
+            echo "LABEL org.opencontainers.image.title=\"$IMAGE_NAME\""
+            echo "LABEL org.opencontainers.image.version=\"$IMAGE_VERSION\""
+            echo "LABEL org.opencontainers.image.base.name=\"debian:$DEBIAN_SUITE\""
+            echo "LABEL org.opencontainers.image.source=\"https://github.com/${GITHUB_REPOSITORY}\""
+            echo "LABEL org.opencontainers.image.revision=\"${GITHUB_SHA}\""
+            echo "USER $RUN_USER"
+            echo "WORKDIR $WORKDIR"
+            if [ -n "$EXPOSED_PORTS" ]; then
+              for port in $EXPOSED_PORTS; do
+                echo "EXPOSE $port"
+              done
+            fi
+            if [ "$ENTRYPOINT_JSON" != "[]" ]; then
+              echo "ENTRYPOINT $ENTRYPOINT_JSON"
+            fi
+            if [ "$CMD_JSON" != "[]" ]; then
+              echo "CMD $CMD_JSON"
+            fi
+          } > "$dockerfile"
+
+      - name: Build local image
+        env:
+          IMAGE_NAME: ${{ inputs.image_name }}
+          PLATFORM: ${{ inputs.platform }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          build_dir=".build/${IMAGE_NAME}"
+          tag_args=()
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            tag_args+=(--tag "$tag")
+          done <<< "$TAGS"
+
+          docker build \
+            --platform "$PLATFORM" \
+            --file "$build_dir/Dockerfile" \
+            "${tag_args[@]}" \
+            "$build_dir"
+
+      - name: Verify shell hardening
+        env:
+          PRIMARY_TAG: ${{ steps.meta.outputs.primary_tag }}
+          IMAGE_NAME: ${{ inputs.image_name }}
+          REMOVE_SHELL: ${{ inputs.remove_shell }}
+        run: |
+          set -euo pipefail
+          if [ "$REMOVE_SHELL" != "true" ]; then
+            exit 0
+          fi
+
+          container="dif-${IMAGE_NAME}-shell-check"
+          docker rm -f "$container" >/dev/null 2>&1 || true
+          container_id="$(docker create --name "$container" "$PRIMARY_TAG")"
+          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
+
+          shell_entries="$(docker export "$container_id" | tar -tf - | grep -Ex 'bin/sh|bin/bash|usr/bin/bash' || true)"
+          if [ -n "$shell_entries" ]; then
+            printf '%s\n' "$shell_entries"
+            echo "Shell binaries are present even though remove_shell=true" >&2
+            exit 1
+          fi
+
+      - name: Smoke test image
+        env:
+          PRIMARY_TAG: ${{ steps.meta.outputs.primary_tag }}
+          IMAGE_NAME: ${{ inputs.image_name }}
+          SMOKE_COMMAND: ${{ inputs.smoke_command }}
+          SMOKE_EXPECTED_OUTPUT: ${{ inputs.smoke_expected_output }}
+          SMOKE_MODE: ${{ inputs.smoke_mode }}
+          SMOKE_STARTUP_TIMEOUT_SECONDS: ${{ inputs.smoke_startup_timeout_seconds }}
+          SMOKE_HTTP_PORT: ${{ inputs.smoke_http_port }}
+          SMOKE_HTTP_PATH: ${{ inputs.smoke_http_path }}
+          SMOKE_HTTP_EXPECTED_STATUS: ${{ inputs.smoke_http_expected_status }}
+          SMOKE_HTTP_EXPECTED_BODY: ${{ inputs.smoke_http_expected_body }}
+          SMOKE_TCP_PORT: ${{ inputs.smoke_tcp_port }}
+        run: |
+          set -euo pipefail
+          container="dif-${IMAGE_NAME}-smoke"
+          docker rm -f "$container" >/dev/null 2>&1 || true
+          smoke_command_args=()
+          if [ -n "$SMOKE_COMMAND" ]; then
+            read -r -a smoke_command_args <<< "$SMOKE_COMMAND"
+          fi
+
+          if [ "$SMOKE_MODE" = "oneshot" ]; then
+            if [ -n "$SMOKE_COMMAND" ]; then
+              if ! docker run --rm "$PRIMARY_TAG" "${smoke_command_args[@]}" >/tmp/dif-smoke-output 2>&1; then
+                cat /tmp/dif-smoke-output
+                exit 1
+              fi
+            else
+              if ! docker run --rm "$PRIMARY_TAG" >/tmp/dif-smoke-output 2>&1; then
+                cat /tmp/dif-smoke-output
+                exit 1
+              fi
+            fi
+
+            if [ -n "$SMOKE_EXPECTED_OUTPUT" ]; then
+              if ! grep -q "$SMOKE_EXPECTED_OUTPUT" /tmp/dif-smoke-output; then
+                cat /tmp/dif-smoke-output
+                exit 1
+              fi
+            fi
+            exit 0
+          fi
+
+          published_ports=()
+          if [ -n "$SMOKE_HTTP_PORT" ]; then
+            published_ports+=(--publish "127.0.0.1::${SMOKE_HTTP_PORT}")
+          fi
+          if [ -n "$SMOKE_TCP_PORT" ] && [ "$SMOKE_TCP_PORT" != "$SMOKE_HTTP_PORT" ]; then
+            published_ports+=(--publish "127.0.0.1::${SMOKE_TCP_PORT}")
+          fi
+
+          docker run -d --name "$container" "${published_ports[@]}" "$PRIMARY_TAG"
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+
+          is_running=false
+          for _ in $(seq 1 "$SMOKE_STARTUP_TIMEOUT_SECONDS"); do
+            if docker inspect "$container" --format '{{.State.Status}}' | grep -qx running; then
+              is_running=true
+              break
+            fi
+            sleep 1
+          done
+          if [ "$is_running" != "true" ]; then
+            docker inspect "$container" --format 'status={{.State.Status}} exitCode={{.State.ExitCode}} error={{.State.Error}}'
+            docker logs "$container"
+            exit 1
+          fi
+
+          docker inspect "$container" --format '{{.Config.User}}' | grep -q '[1-9]'
+
+          mapped_endpoint() {
+            local port="$1"
+            docker port "$container" "${port}/tcp" | head -n 1
+          }
+
+          endpoint_host() {
+            local endpoint="$1"
+            local host="${endpoint%:*}"
+            if [ "$host" = "0.0.0.0" ] || [ "$host" = "::" ] || [ "$host" = "[::]" ]; then
+              host="127.0.0.1"
+            fi
+            printf '%s\n' "$host"
+          }
+
+          endpoint_port() {
+            local endpoint="$1"
+            printf '%s\n' "${endpoint##*:}"
+          }
+
+          if [ -n "$SMOKE_TCP_PORT" ]; then
+            endpoint="$(mapped_endpoint "$SMOKE_TCP_PORT")"
+            if [ -z "$endpoint" ]; then
+              echo "No published port found for TCP smoke port $SMOKE_TCP_PORT" >&2
+              docker logs "$container"
+              exit 1
+            fi
+            host="$(endpoint_host "$endpoint")"
+            port="$(endpoint_port "$endpoint")"
+
+            tcp_ready=false
+            for _ in $(seq 1 "$SMOKE_STARTUP_TIMEOUT_SECONDS"); do
+              if timeout 2 bash -c "</dev/tcp/${host}/${port}" 2>/dev/null; then
+                tcp_ready=true
+                break
+              fi
+              sleep 1
+            done
+            if [ "$tcp_ready" != "true" ]; then
+              echo "TCP smoke check failed for ${host}:${port}" >&2
+              docker logs "$container"
+              exit 1
+            fi
+          fi
+
+          if [ -n "$SMOKE_HTTP_PORT" ]; then
+            endpoint="$(mapped_endpoint "$SMOKE_HTTP_PORT")"
+            if [ -z "$endpoint" ]; then
+              echo "No published port found for HTTP smoke port $SMOKE_HTTP_PORT" >&2
+              docker logs "$container"
+              exit 1
+            fi
+            host="$(endpoint_host "$endpoint")"
+            port="$(endpoint_port "$endpoint")"
+            http_path="${SMOKE_HTTP_PATH:-/}"
+            http_url="http://${host}:${port}${http_path}"
+
+            http_status=""
+            for _ in $(seq 1 "$SMOKE_STARTUP_TIMEOUT_SECONDS"); do
+              http_status="$(curl -sS --max-time 2 -o /tmp/dif-smoke-http-output -w '%{http_code}' "$http_url" 2>/tmp/dif-smoke-http-error || true)"
+              if [ "$http_status" = "$SMOKE_HTTP_EXPECTED_STATUS" ]; then
+                break
+              fi
+              sleep 1
+            done
+            if [ "$http_status" != "$SMOKE_HTTP_EXPECTED_STATUS" ]; then
+              echo "HTTP smoke check failed for $http_url: expected $SMOKE_HTTP_EXPECTED_STATUS, got ${http_status:-none}" >&2
+              cat /tmp/dif-smoke-http-error 2>/dev/null || true
+              cat /tmp/dif-smoke-http-output 2>/dev/null || true
+              docker logs "$container"
+              exit 1
+            fi
+            if [ -n "$SMOKE_HTTP_EXPECTED_BODY" ]; then
+              if ! grep -q "$SMOKE_HTTP_EXPECTED_BODY" /tmp/dif-smoke-http-output; then
+                cat /tmp/dif-smoke-http-output
+                docker logs "$container"
+                exit 1
+              fi
+            fi
+          fi
+
+          if [ -n "$SMOKE_COMMAND" ]; then
+            if ! docker exec "$container" "${smoke_command_args[@]}" >/tmp/dif-smoke-output 2>&1; then
+              cat /tmp/dif-smoke-output
+              docker logs "$container"
+              exit 1
+            fi
+            if [ -n "$SMOKE_EXPECTED_OUTPUT" ]; then
+              if ! grep -q "$SMOKE_EXPECTED_OUTPUT" /tmp/dif-smoke-output; then
+                cat /tmp/dif-smoke-output
+                docker logs "$container"
+                exit 1
+              fi
+            fi
+          fi
+
+      - name: Generate SBOM
+        if: inputs.generate_sbom
+        uses: anchore/sbom-action@v0.20.10
+        with:
+          image: ${{ steps.meta.outputs.primary_tag }}
+          format: spdx-json
+          output-file: sbom-${{ inputs.image_name }}-${{ inputs.debian_suite }}-${{ inputs.debian_arch }}.spdx.json
+          artifact-name: sbom-${{ inputs.image_name }}-${{ inputs.debian_suite }}-${{ inputs.debian_arch }}
+
+      - name: Scan image
+        if: inputs.scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ steps.meta.outputs.primary_tag }}
+          format: table
+          scanners: vuln
+          exit-code: ${{ inputs.fail_on_vulnerabilities && '1' || '0' }}
+          ignore-unfixed: true
+          trivyignores: ${{ inputs.trivyignores }}
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+
+      - name: Log in to registry
+        if: inputs.push
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ secrets.registry_username || github.actor }}
+          password: ${{ secrets.registry_password || github.token }}
+
+      - name: Push image
+        if: inputs.push
+        id: publish
+        env:
+          PRIMARY_TAG: ${{ steps.meta.outputs.primary_tag }}
+          ARCH_TAG: ${{ steps.meta.outputs.arch_tag }}
+          PUSH_PRIMARY_TAG: ${{ inputs.push_primary_tag }}
+        run: |
+          set -euo pipefail
+          digest_tag="$ARCH_TAG"
+          if [ "$PUSH_PRIMARY_TAG" = "true" ]; then
+            docker push "$ARCH_TAG"
+            push_output="$(docker push "$PRIMARY_TAG")"
+            digest_tag="$PRIMARY_TAG"
+          else
+            push_output="$(docker push "$ARCH_TAG")"
+          fi
+          printf '%s\n' "$push_output"
+          digest="$(printf '%s\n' "$push_output" | sed -n 's/.*digest: \(sha256:[0-9a-f]\+\).*/\1/p' | tail -n 1)"
+          if [ -z "$digest" ]; then
+            digest="$(docker buildx imagetools inspect "$digest_tag" | sed -n 's/^Digest:[[:space:]]*//p' | head -n 1)"
+          fi
+          if [ -z "$digest" ]; then
+            echo "Failed to resolve pushed digest for $digest_tag" >&2
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "Published $digest_tag@$digest"
+
+      - name: Install cosign
+        if: inputs.push && inputs.sign
+        uses: sigstore/cosign-installer@v4.0.0
+
+      - name: Sign pushed digest
+        if: inputs.push && inputs.sign
+        env:
+          IMAGE_REF: ${{ steps.meta.outputs.image_ref }}
+          DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          set -euo pipefail
+          image_digest="$IMAGE_REF@$DIGEST"
+          attempt=1
+          max_attempts=5
+          until cosign sign --yes "$image_digest"; do
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "Failed to sign $image_digest after $attempt attempts" >&2
+              exit 1
+            fi
+            delay=$((attempt * 15))
+            echo "Signing $image_digest failed on attempt $attempt. Retrying in ${delay}s..." >&2
+            sleep "$delay"
+            attempt=$((attempt + 1))
+          done

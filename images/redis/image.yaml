@@ -1,0 +1,74 @@
+name: redis
+version: "7.0"
+profile: runtime
+
+base:
+  distribution: debian
+  suite: bookworm
+  architectures:
+    - amd64
+    - arm64
+  mirror: http://deb.debian.org/debian
+  securityMirror: http://security.debian.org/debian-security
+  variant: minbase
+
+packages:
+  install:
+    - ca-certificates
+    - redis-server
+    - redis-tools
+  remove:
+    - apt
+
+user:
+  name: redis
+  uid: 10001
+  gid: 0
+  home: /data
+  shell: /usr/sbin/nologin
+
+paths:
+  - path: /data
+    owner: 10001:0
+    mode: "0770"
+  - path: /run/redis
+    owner: 10001:0
+    mode: "0770"
+  - path: /var/lib/redis
+    owner: 10001:0
+    mode: "0770"
+  - path: /etc/redis
+    owner: root:0
+    mode: "0750"
+
+files:
+  - source: redis.conf
+    destination: /etc/redis/redis.conf
+    owner: root:0
+    mode: "0640"
+
+entrypoint:
+  - /usr/bin/redis-server
+
+cmd:
+  - /etc/redis/redis.conf
+
+ports:
+  - 6379
+
+hardening:
+  removeApt: true
+  removeDpkg: false
+  cleanAptCache: true
+  cleanDocs: true
+  cleanManPages: true
+  cleanLogs: true
+  cleanTmp: true
+  runAsNonRoot: true
+  openshiftCompatible: true
+
+oci:
+  registry: ghcr.io
+  namespace: ""
+  image: redis
+  tag: "7.0-bookworm"

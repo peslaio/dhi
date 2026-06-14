@@ -1,0 +1,173 @@
+nameOverride: ""
+fullnameOverride: ""
+commonLabels: {}
+commonAnnotations: {}
+
+replicaCount: 1
+workload:
+  type: deployment
+updateStrategy:
+  type: RollingUpdate
+
+image:
+  registry: ghcr.io
+  repository: tpesla/haproxy
+  tag: 2.6-bookworm
+  digest: ""
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  automountServiceAccountToken: false
+
+podLabels: {}
+podAnnotations: {}
+podSecurityContext:
+  enabled: true
+  fsGroup: 0
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  enabled: true
+  runAsUser: 10001
+  runAsGroup: 0
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop:
+      - ALL
+
+command: []
+args: []
+env: {}
+extraEnvVars: []
+extraEnvVarsCM: ""
+extraEnvVarsSecret: ""
+extraEnvFrom: []
+
+containerPorts:
+  - name: http
+    containerPort: 8080
+    protocol: TCP
+service:
+  enabled: true
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+  annotations: {}
+
+config:
+  enabled: true
+  filename: haproxy.conf
+  mountPath: /etc/haproxy/haproxy.conf
+  data:
+    haproxy.conf: |
+      global
+          log stdout format raw local0
+          maxconn 256
+          stats socket /run/haproxy/admin.sock mode 660 level admin
+
+      defaults
+          log global
+          mode http
+          timeout connect 5s
+          timeout client 30s
+          timeout server 30s
+
+      frontend http
+          bind :8080
+          http-request return status 200 content-type text/plain string "OK\n" if { path /healthz }
+          default_backend empty
+
+      backend empty
+          http-request return status 404 content-type text/plain string "Not found\n"
+
+persistence:
+  enabled: false
+  existingClaim: ""
+  storageClass: ""
+  annotations: {}
+  accessModes:
+    - ReadWriteOnce
+  size: 1Gi
+  mountPath: /var/lib/haproxy
+
+emptyDirs: []
+extraVolumes: []
+extraVolumeMounts: []
+initContainers: []
+sidecars: []
+resources: {}
+lifecycle: {}
+
+livenessProbe:
+  enabled: true
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 10
+readinessProbe:
+  enabled: true
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+startupProbe:
+  enabled: false
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+pdb:
+  create: false
+  minAvailable: ""
+  maxUnavailable: 1
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: haproxy.local
+      paths:
+        - path: /
+          pathType: Prefix
+          servicePort: http
+  tls: []
+
+openshift:
+  enabled: false
+
+metrics:
+  enabled: false
+
+networkPolicy:
+  enabled: false
+  allowExternal: true
+  ingress: []
+  egress: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+priorityClassName: ""

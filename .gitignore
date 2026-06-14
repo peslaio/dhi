@@ -1,0 +1,7 @@
+charts/*/Chart.lock
+charts/*/charts/
+
+# Local AI-agent instructions and scratch context. Keep these out of git.
+AGENTS.local.md
+debian-image-forge-spec.md
+.ai-agent/

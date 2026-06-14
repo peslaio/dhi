@@ -1,0 +1,90 @@
+name: Build Memcached image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/reusable-build-debian-image.yml
+      - .github/workflows/reusable-publish-image-manifest.yml
+      - .github/workflows/memcached-image.yml
+      - images/memcached/**
+  pull_request:
+    paths:
+      - .github/workflows/reusable-build-debian-image.yml
+      - .github/workflows/reusable-publish-image-manifest.yml
+      - .github/workflows/memcached-image.yml
+      - images/memcached/**
+  workflow_dispatch:
+    inputs:
+      push:
+        description: Push to the configured registry after build, smoke test, SBOM, and scan.
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: memcached-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  memcached:
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - debian_arch: amd64
+            platform: linux/amd64
+          - debian_arch: arm64
+            platform: linux/arm64
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/reusable-build-debian-image.yml
+    with:
+      image_name: memcached
+      image_version: "1.6"
+      debian_suite: bookworm
+      debian_arch: ${{ matrix.target.debian_arch }}
+      platform: ${{ matrix.target.platform }}
+      packages: ca-certificates,memcached
+      runtime_closure: true
+      runtime_closure_binaries: /usr/bin/memcached
+      forbidden_packages: apt,libapt-pkg6.0,debian-archive-keyring,gpgv,bash,dash,dpkg
+      allowed_packages: libc6,memcached
+      entrypoint: '["/usr/bin/memcached"]'
+      cmd: '["-m","64","-p","11211","-l","0.0.0.0","-U","0"]'
+      workdir: /data
+      exposed_ports: "11211"
+      runtime_user_name: memcached
+      runtime_home: /data
+      writable_paths: /data
+      smoke_mode: running
+      smoke_tcp_port: "11211"
+      smoke_command: /usr/bin/memcached -h
+      smoke_expected_output: memcached
+      remove_shell: true
+      push_primary_tag: false
+      push: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.push) }}
+      generate_sbom: true
+      scan: true
+      fail_on_vulnerabilities: true
+      sign: true
+    secrets: inherit
+
+  memcached-manifest:
+    needs: memcached
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.push) }}
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/reusable-publish-image-manifest.yml
+    with:
+      image_name: memcached
+      image_version: "1.6"
+      debian_suite: bookworm
+      sign: true
+    secrets: inherit

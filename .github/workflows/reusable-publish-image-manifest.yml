@@ -1,0 +1,126 @@
+name: Reusable OCI image manifest publish
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        description: OCI image name.
+        required: true
+        type: string
+      image_version:
+        description: Application version used in tags.
+        required: true
+        type: string
+      debian_suite:
+        description: Debian suite used in tags.
+        required: false
+        default: bookworm
+        type: string
+      debian_arches:
+        description: Space-separated Debian architectures included in the manifest.
+        required: false
+        default: amd64 arm64
+        type: string
+      registry:
+        description: OCI registry host.
+        required: false
+        default: ghcr.io
+        type: string
+      namespace:
+        description: Registry namespace. Defaults to the repository owner when empty.
+        required: false
+        default: ""
+        type: string
+      sign:
+        description: Sign the published manifest digest with cosign keyless signing.
+        required: false
+        default: true
+        type: boolean
+    secrets:
+      registry_username:
+        required: false
+      registry_password:
+        required: false
+    outputs:
+      digest:
+        description: Published manifest digest.
+        value: ${{ jobs.publish.outputs.digest }}
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    outputs:
+      digest: ${{ steps.publish.outputs.digest }}
+
+    steps:
+      - name: Prepare image metadata
+        id: meta
+        env:
+          REGISTRY: ${{ inputs.registry }}
+          NAMESPACE: ${{ inputs.namespace }}
+          IMAGE_NAME: ${{ inputs.image_name }}
+          IMAGE_VERSION: ${{ inputs.image_version }}
+          DEBIAN_SUITE: ${{ inputs.debian_suite }}
+          DEBIAN_ARCHES: ${{ inputs.debian_arches }}
+        run: |
+          set -euo pipefail
+          namespace="${NAMESPACE:-$GITHUB_REPOSITORY_OWNER}"
+          image_ref="${REGISTRY}/${namespace}/${IMAGE_NAME}"
+          image_ref="$(printf '%s' "$image_ref" | tr '[:upper:]' '[:lower:]')"
+          primary_tag="${image_ref}:${IMAGE_VERSION}-${DEBIAN_SUITE}"
+
+          {
+            echo "image_ref=$image_ref"
+            echo "primary_tag=$primary_tag"
+            echo "source_tags<<EOF"
+            for arch in $DEBIAN_ARCHES; do
+              echo "${primary_tag}-${arch}"
+            done
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Log in to registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ secrets.registry_username || github.actor }}
+          password: ${{ secrets.registry_password || github.token }}
+
+      - name: Publish manifest
+        id: publish
+        env:
+          PRIMARY_TAG: ${{ steps.meta.outputs.primary_tag }}
+          SOURCE_TAGS: ${{ steps.meta.outputs.source_tags }}
+        run: |
+          set -euo pipefail
+          refs=()
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            refs+=("$tag")
+          done <<< "$SOURCE_TAGS"
+
+          docker buildx imagetools create --tag "$PRIMARY_TAG" "${refs[@]}"
+          digest="$(docker buildx imagetools inspect "$PRIMARY_TAG" | sed -n 's/^Digest:[[:space:]]*//p' | head -n 1)"
+          if [ -z "$digest" ]; then
+            echo "Failed to resolve published manifest digest for $PRIMARY_TAG" >&2
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "Published $PRIMARY_TAG@$digest"
+
+      - name: Install cosign
+        if: inputs.sign
+        uses: sigstore/cosign-installer@v4.0.0
+
+      - name: Sign manifest digest
+        if: inputs.sign
+        env:
+          IMAGE_REF: ${{ steps.meta.outputs.image_ref }}
+          DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "$IMAGE_REF@$DIGEST"

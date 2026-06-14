@@ -1,0 +1,169 @@
+nameOverride: ""
+fullnameOverride: ""
+commonLabels: {}
+commonAnnotations: {}
+
+replicaCount: 1
+workload:
+  type: statefulset
+updateStrategy:
+  type: RollingUpdate
+
+image:
+  registry: ghcr.io
+  repository: tpesla/mariadb
+  tag: 10.11-bookworm
+  digest: ""
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  automountServiceAccountToken: false
+
+podLabels: {}
+podAnnotations: {}
+podSecurityContext:
+  enabled: true
+  fsGroup: 0
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  enabled: true
+  runAsUser: 10001
+  runAsGroup: 0
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop:
+      - ALL
+
+command:
+  - /bin/sh
+  - -ec
+args:
+  - |
+    mkdir -p /run/mysqld /var/lib/mysql
+    if [ ! -d /var/lib/mysql/mysql ]; then
+      mariadb-install-db --user=mysql --datadir=/var/lib/mysql --skip-test-db
+    fi
+    exec /usr/sbin/mariadbd \
+      --user=mysql \
+      --datadir=/var/lib/mysql \
+      --socket=/run/mysqld/mysqld.sock \
+      --pid-file=/run/mysqld/mysqld.pid \
+      --bind-address=0.0.0.0 \
+      --port=3306
+env: {}
+extraEnvVars: []
+extraEnvVarsCM: ""
+extraEnvVarsSecret: ""
+extraEnvFrom: []
+
+containerPorts:
+  - name: mysql
+    containerPort: 3306
+    protocol: TCP
+service:
+  enabled: true
+  type: ClusterIP
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: mysql
+      protocol: TCP
+  annotations: {}
+
+config:
+  enabled: false
+  filename: mariadb.cnf
+  mountPath: /etc/mysql/conf.d/dhi.cnf
+  data: {}
+
+persistence:
+  enabled: true
+  volumeClaimTemplate: true
+  existingClaim: ""
+  storageClass: ""
+  annotations: {}
+  accessModes:
+    - ReadWriteOnce
+  size: 8Gi
+  mountPath: /var/lib/mysql
+
+emptyDirs:
+  - name: run
+    mountPath: /run/mysqld
+  - name: logs
+    mountPath: /var/log/mysql
+extraVolumes: []
+extraVolumeMounts: []
+initContainers: []
+sidecars: []
+resources: {}
+lifecycle: {}
+
+livenessProbe:
+  enabled: true
+  tcpSocket:
+    port: mysql
+  initialDelaySeconds: 30
+  periodSeconds: 10
+readinessProbe:
+  enabled: true
+  tcpSocket:
+    port: mysql
+  initialDelaySeconds: 10
+  periodSeconds: 10
+startupProbe:
+  enabled: true
+  tcpSocket:
+    port: mysql
+  failureThreshold: 60
+  periodSeconds: 5
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+pdb:
+  create: false
+  minAvailable: ""
+  maxUnavailable: 1
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts: []
+  tls: []
+
+openshift:
+  enabled: false
+
+metrics:
+  enabled: false
+
+networkPolicy:
+  enabled: false
+  allowExternal: true
+  ingress: []
+  egress: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+priorityClassName: ""

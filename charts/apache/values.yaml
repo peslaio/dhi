@@ -1,0 +1,187 @@
+nameOverride: ""
+fullnameOverride: ""
+commonLabels: {}
+commonAnnotations: {}
+
+replicaCount: 1
+workload:
+  type: deployment
+updateStrategy:
+  type: RollingUpdate
+
+image:
+  registry: ghcr.io
+  repository: tpesla/apache
+  tag: 2.4-bookworm
+  digest: ""
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  automountServiceAccountToken: false
+
+podLabels: {}
+podAnnotations: {}
+podSecurityContext:
+  enabled: true
+  fsGroup: 0
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  enabled: true
+  runAsUser: 10001
+  runAsGroup: 0
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop:
+      - ALL
+
+command: []
+args: []
+env: {}
+extraEnvVars: []
+extraEnvVarsCM: ""
+extraEnvVarsSecret: ""
+extraEnvFrom: []
+
+containerPorts:
+  - name: http
+    containerPort: 8080
+    protocol: TCP
+service:
+  enabled: true
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+  annotations: {}
+
+config:
+  enabled: true
+  filename: apache.conf
+  mountPath: /etc/apache/apache.conf
+  data:
+    apache.conf: |
+      ServerRoot "/etc/apache2"
+      ServerName localhost
+      PidFile /run/apache/apache2.pid
+
+      Listen 8080
+
+      LoadModule mpm_event_module /usr/lib/apache2/modules/mod_mpm_event.so
+      LoadModule authz_core_module /usr/lib/apache2/modules/mod_authz_core.so
+      LoadModule authz_host_module /usr/lib/apache2/modules/mod_authz_host.so
+      LoadModule dir_module /usr/lib/apache2/modules/mod_dir.so
+      LoadModule mime_module /usr/lib/apache2/modules/mod_mime.so
+
+      TypesConfig /etc/mime.types
+      DirectoryIndex index.html
+      DocumentRoot /var/www/html
+
+      <Directory />
+          Require all denied
+      </Directory>
+
+      <Directory /var/www/html>
+          Options Indexes FollowSymLinks
+          AllowOverride None
+          Require all granted
+      </Directory>
+
+      ErrorLog /proc/self/fd/2
+      LogFormat "%h %l %u %t \"%r\" %>s %b" common
+      CustomLog /proc/self/fd/1 common
+
+persistence:
+  enabled: false
+  existingClaim: ""
+  storageClass: ""
+  annotations: {}
+  accessModes:
+    - ReadWriteOnce
+  size: 8Gi
+  mountPath: /var/www/html
+
+emptyDirs:
+  - name: run
+    mountPath: /run/apache
+  - name: logs
+    mountPath: /var/log/apache2
+  - name: cache
+    mountPath: /var/cache/apache2
+extraVolumes: []
+extraVolumeMounts: []
+initContainers: []
+sidecars: []
+resources: {}
+lifecycle: {}
+
+livenessProbe:
+  enabled: true
+  tcpSocket:
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 10
+readinessProbe:
+  enabled: true
+  tcpSocket:
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+startupProbe:
+  enabled: false
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+pdb:
+  create: false
+  minAvailable: ""
+  maxUnavailable: 1
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: apache.local
+      paths:
+        - path: /
+          pathType: Prefix
+          servicePort: http
+  tls: []
+
+openshift:
+  enabled: false
+
+metrics:
+  enabled: false
+
+networkPolicy:
+  enabled: false
+  allowExternal: true
+  ingress: []
+  egress: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+priorityClassName: ""

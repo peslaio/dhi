@@ -1,0 +1,62 @@
+name: postgresql
+version: "15"
+profile: runtime
+
+base:
+  distribution: debian
+  suite: bookworm
+  architectures:
+    - amd64
+    - arm64
+  mirror: http://deb.debian.org/debian
+  securityMirror: http://security.debian.org/debian-security
+  variant: minbase
+
+packages:
+  install:
+    - ca-certificates
+    - postgresql-15
+  remove:
+    - apt
+
+user:
+  name: postgres
+  uid: 10001
+  gid: 0
+  home: /var/lib/postgresql
+  shell: /usr/sbin/nologin
+
+paths:
+  - path: /var/lib/postgresql
+    owner: 10001:0
+    mode: "0770"
+  - path: /run/postgresql
+    owner: 10001:0
+    mode: "0770"
+  - path: /var/log/postgresql
+    owner: 10001:0
+    mode: "0770"
+
+cmd:
+  - /usr/lib/postgresql/15/bin/postgres
+  - --version
+
+ports:
+  - 5432
+
+hardening:
+  removeApt: true
+  removeDpkg: false
+  cleanAptCache: true
+  cleanDocs: true
+  cleanManPages: true
+  cleanLogs: true
+  cleanTmp: true
+  runAsNonRoot: true
+  openshiftCompatible: true
+
+oci:
+  registry: ghcr.io
+  namespace: ""
+  image: postgresql
+  tag: "15-bookworm"

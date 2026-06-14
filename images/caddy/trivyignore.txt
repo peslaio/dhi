@@ -1,0 +1,5 @@
+# Upstream Caddy 2.11.4 packages are built with Go 1.26.3.
+# Keep Caddy scanning enabled and ignore only these Go stdlib findings until
+# upstream packages are rebuilt with Go 1.26.4 or newer.
+CVE-2026-42504
+CVE-2026-27145

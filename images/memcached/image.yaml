@@ -1,0 +1,65 @@
+name: memcached
+version: "1.6"
+profile: runtime
+
+base:
+  distribution: debian
+  suite: bookworm
+  architectures:
+    - amd64
+    - arm64
+  mirror: http://deb.debian.org/debian
+  securityMirror: http://security.debian.org/debian-security
+  variant: minbase
+
+packages:
+  install:
+    - ca-certificates
+    - memcached
+  remove:
+    - apt
+
+user:
+  name: memcached
+  uid: 10001
+  gid: 0
+  home: /data
+  shell: /usr/sbin/nologin
+
+paths:
+  - path: /data
+    owner: 10001:0
+    mode: "0770"
+
+entrypoint:
+  - /usr/bin/memcached
+
+cmd:
+  - -m
+  - "64"
+  - -p
+  - "11211"
+  - -l
+  - 0.0.0.0
+  - -U
+  - "0"
+
+ports:
+  - 11211
+
+hardening:
+  removeApt: true
+  removeDpkg: false
+  cleanAptCache: true
+  cleanDocs: true
+  cleanManPages: true
+  cleanLogs: true
+  cleanTmp: true
+  runAsNonRoot: true
+  openshiftCompatible: true
+
+oci:
+  registry: ghcr.io
+  namespace: ""
+  image: memcached
+  tag: "1.6-bookworm"

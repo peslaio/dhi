@@ -1,0 +1,72 @@
+name: haproxy
+version: "2.6"
+profile: runtime
+
+base:
+  distribution: debian
+  suite: bookworm
+  architectures:
+    - amd64
+    - arm64
+  mirror: http://deb.debian.org/debian
+  securityMirror: http://security.debian.org/debian-security
+  variant: minbase
+
+packages:
+  install:
+    - ca-certificates
+    - haproxy
+  remove:
+    - apt
+
+user:
+  name: haproxy
+  uid: 10001
+  gid: 0
+  home: /var/lib/haproxy
+  shell: /usr/sbin/nologin
+
+paths:
+  - path: /run/haproxy
+    owner: 10001:0
+    mode: "0770"
+  - path: /var/lib/haproxy
+    owner: 10001:0
+    mode: "0770"
+  - path: /etc/haproxy
+    owner: root:0
+    mode: "0750"
+
+files:
+  - source: haproxy.conf
+    destination: /etc/haproxy/haproxy.conf
+    owner: root:0
+    mode: "0640"
+
+entrypoint:
+  - /usr/sbin/haproxy
+
+cmd:
+  - -f
+  - /etc/haproxy/haproxy.conf
+  - -db
+
+ports:
+  - 8080
+
+hardening:
+  removeApt: true
+  removeDpkg: false
+  cleanAptCache: true
+  cleanDocs: true
+  cleanManPages: true
+  cleanLogs: true
+  cleanTmp: true
+  runAsNonRoot: true
+  openshiftCompatible: true
+
+oci:
+  registry: ghcr.io
+  namespace: ""
+  image: haproxy
+  tag: "2.6-bookworm"

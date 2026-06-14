@@ -1,0 +1,86 @@
+name: Build Java JRE image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/reusable-build-debian-image.yml
+      - .github/workflows/reusable-publish-image-manifest.yml
+      - .github/workflows/java-jre-image.yml
+      - images/java-jre/**
+  pull_request:
+    paths:
+      - .github/workflows/reusable-build-debian-image.yml
+      - .github/workflows/reusable-publish-image-manifest.yml
+      - .github/workflows/java-jre-image.yml
+      - images/java-jre/**
+  workflow_dispatch:
+    inputs:
+      push:
+        description: Push to the configured registry after build, smoke test, SBOM, and scan.
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: java-jre-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  java-jre:
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - debian_arch: amd64
+            platform: linux/amd64
+            java_home: /usr/lib/jvm/java-17-openjdk-amd64
+          - debian_arch: arm64
+            platform: linux/arm64
+            java_home: /usr/lib/jvm/java-17-openjdk-arm64
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/reusable-build-debian-image.yml
+    with:
+      image_name: java-jre
+      image_version: "17"
+      debian_suite: bookworm
+      debian_arch: ${{ matrix.target.debian_arch }}
+      platform: ${{ matrix.target.platform }}
+      packages: ca-certificates,openjdk-17-jre-headless
+      cmd: '["/usr/bin/java","-version"]'
+      workdir: /app
+      environment: |
+        JAVA_HOME=${{ matrix.target.java_home }}
+      runtime_user_name: java
+      runtime_home: /home/java
+      writable_paths: /app /home/java
+      smoke_mode: oneshot
+      smoke_command: /usr/bin/java -version
+      smoke_expected_output: 'version "17'
+      push_primary_tag: false
+      push: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.push) }}
+      generate_sbom: true
+      scan: true
+      fail_on_vulnerabilities: true
+      sign: true
+    secrets: inherit
+
+  java-jre-manifest:
+    needs: java-jre
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.push) }}
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/reusable-publish-image-manifest.yml
+    with:
+      image_name: java-jre
+      image_version: "17"
+      debian_suite: bookworm
+      sign: true
+    secrets: inherit

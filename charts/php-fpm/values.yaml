@@ -1,0 +1,170 @@
+nameOverride: ""
+fullnameOverride: ""
+commonLabels: {}
+commonAnnotations: {}
+
+replicaCount: 1
+workload:
+  type: deployment
+updateStrategy:
+  type: RollingUpdate
+
+image:
+  registry: ghcr.io
+  repository: tpesla/php-fpm
+  tag: 8.2-bookworm
+  digest: ""
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  automountServiceAccountToken: false
+
+podLabels: {}
+podAnnotations: {}
+podSecurityContext:
+  enabled: true
+  fsGroup: 0
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  enabled: true
+  runAsUser: 10001
+  runAsGroup: 0
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop:
+      - ALL
+
+command: []
+args: []
+env: {}
+extraEnvVars: []
+extraEnvVarsCM: ""
+extraEnvVarsSecret: ""
+extraEnvFrom: []
+
+containerPorts:
+  - name: fastcgi
+    containerPort: 9000
+    protocol: TCP
+service:
+  enabled: true
+  type: ClusterIP
+  ports:
+    - name: fastcgi
+      port: 9000
+      targetPort: fastcgi
+      protocol: TCP
+  annotations: {}
+
+config:
+  enabled: true
+  filename: php-fpm.conf
+  mountPath: /etc/php-fpm/php-fpm.conf
+  data:
+    php-fpm.conf: |
+      [global]
+      daemonize = no
+      pid = /run/php-fpm/php-fpm.pid
+      error_log = /proc/self/fd/2
+
+      [www]
+      listen = 0.0.0.0:9000
+      user = php
+      group = root
+      pm = dynamic
+      pm.max_children = 8
+      pm.start_servers = 2
+      pm.min_spare_servers = 1
+      pm.max_spare_servers = 3
+      catch_workers_output = yes
+      clear_env = no
+      access.log = /proc/self/fd/2
+      php_admin_flag[log_errors] = on
+      php_admin_value[error_log] = /proc/self/fd/2
+
+persistence:
+  enabled: false
+  existingClaim: ""
+  storageClass: ""
+  annotations: {}
+  accessModes:
+    - ReadWriteOnce
+  size: 8Gi
+  mountPath: /var/www/html
+
+emptyDirs:
+  - name: run
+    mountPath: /run/php-fpm
+  - name: logs
+    mountPath: /var/log/php8.2-fpm
+extraVolumes: []
+extraVolumeMounts: []
+initContainers: []
+sidecars: []
+resources: {}
+lifecycle: {}
+
+livenessProbe:
+  enabled: true
+  tcpSocket:
+    port: fastcgi
+  initialDelaySeconds: 10
+  periodSeconds: 10
+readinessProbe:
+  enabled: true
+  tcpSocket:
+    port: fastcgi
+  initialDelaySeconds: 5
+  periodSeconds: 10
+startupProbe:
+  enabled: false
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+pdb:
+  create: false
+  minAvailable: ""
+  maxUnavailable: 1
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts: []
+  tls: []
+
+openshift:
+  enabled: false
+
+metrics:
+  enabled: false
+
+networkPolicy:
+  enabled: false
+  allowExternal: true
+  ingress: []
+  egress: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+priorityClassName: ""

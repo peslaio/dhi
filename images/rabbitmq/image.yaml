@@ -1,0 +1,67 @@
+name: rabbitmq
+version: "3.10"
+profile: runtime
+
+base:
+  distribution: debian
+  suite: bookworm
+  architectures:
+    - amd64
+    - arm64
+  mirror: http://deb.debian.org/debian
+  securityMirror: http://security.debian.org/debian-security
+  variant: minbase
+
+packages:
+  install:
+    - ca-certificates
+    - rabbitmq-server
+  remove:
+    - apt
+
+user:
+  name: rabbitmq
+  uid: 10001
+  gid: 0
+  home: /var/lib/rabbitmq
+  shell: /usr/sbin/nologin
+
+paths:
+  - path: /var/lib/rabbitmq
+    owner: 10001:0
+    mode: "0770"
+  - path: /run/rabbitmq
+    owner: 10001:0
+    mode: "0770"
+  - path: /var/log/rabbitmq
+    owner: 10001:0
+    mode: "0770"
+
+environment:
+  HOME: /var/lib/rabbitmq
+  RABBITMQ_MNESIA_BASE: /var/lib/rabbitmq/mnesia
+
+cmd:
+  - /usr/sbin/rabbitmq-server
+  - --version
+
+ports:
+  - 5672
+  - 15672
+
+hardening:
+  removeApt: true
+  removeDpkg: false
+  cleanAptCache: true
+  cleanDocs: true
+  cleanManPages: true
+  cleanLogs: true
+  cleanTmp: true
+  runAsNonRoot: true
+  openshiftCompatible: true
+
+oci:
+  registry: ghcr.io
+  namespace: ""
+  image: rabbitmq
+  tag: "3.10-bookworm"

@@ -1,0 +1,57 @@
+name: python
+version: "3.11"
+profile: runtime
+
+base:
+  distribution: debian
+  suite: bookworm
+  architectures:
+    - amd64
+    - arm64
+  mirror: http://deb.debian.org/debian
+  securityMirror: http://security.debian.org/debian-security
+  variant: minbase
+
+packages:
+  install:
+    - ca-certificates
+    - python3
+    - python-is-python3
+  remove:
+    - apt
+
+user:
+  name: python
+  uid: 10001
+  gid: 0
+  home: /home/python
+  shell: /usr/sbin/nologin
+
+paths:
+  - path: /app
+    owner: 10001:0
+    mode: "0770"
+  - path: /home/python
+    owner: 10001:0
+    mode: "0770"
+
+cmd:
+  - /usr/bin/python
+  - --version
+
+hardening:
+  removeApt: true
+  removeDpkg: false
+  cleanAptCache: true
+  cleanDocs: true
+  cleanManPages: true
+  cleanLogs: true
+  cleanTmp: true
+  runAsNonRoot: true
+  openshiftCompatible: true
+
+oci:
+  registry: ghcr.io
+  namespace: ""
+  image: python
+  tag: "3.11-bookworm"

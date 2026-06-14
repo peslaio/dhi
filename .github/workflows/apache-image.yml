@@ -1,0 +1,103 @@
+name: Build Apache image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/reusable-build-debian-image.yml
+      - .github/workflows/reusable-publish-image-manifest.yml
+      - .github/workflows/apache-image.yml
+      - images/apache/**
+  pull_request:
+    paths:
+      - .github/workflows/reusable-build-debian-image.yml
+      - .github/workflows/reusable-publish-image-manifest.yml
+      - .github/workflows/apache-image.yml
+      - images/apache/**
+  workflow_dispatch:
+    inputs:
+      push:
+        description: Push to the configured registry after build, smoke test, SBOM, and scan.
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: apache-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apache:
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - debian_arch: amd64
+            platform: linux/amd64
+          - debian_arch: arm64
+            platform: linux/arm64
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/reusable-build-debian-image.yml
+    with:
+      image_name: apache
+      image_version: "2.4"
+      debian_suite: bookworm
+      debian_arch: ${{ matrix.target.debian_arch }}
+      platform: ${{ matrix.target.platform }}
+      packages: ca-certificates,apache2
+      runtime_closure: true
+      runtime_closure_binaries: |
+        /usr/sbin/apache2
+        /usr/lib/apache2/modules/mod_authz_core.so
+        /usr/lib/apache2/modules/mod_authz_host.so
+        /usr/lib/apache2/modules/mod_dir.so
+        /usr/lib/apache2/modules/mod_mime.so
+        /usr/lib/apache2/modules/mod_mpm_prefork.so
+      runtime_closure_paths: |
+        /etc/apache
+        /etc/apache2
+        /etc/mime.types
+        /etc/ssl/certs
+        /usr/lib/*/ossl-modules
+        /var/www/html
+      forbidden_packages: apt,libapt-pkg6.0,debian-archive-keyring,gpgv,bash,dash,dpkg
+      allowed_packages: ${{ matrix.target.debian_arch == 'amd64' && 'apache2,apache2-bin,ca-certificates,libc6,libcrypt1,libexpat1,libssl3,media-types' || 'apache2,apache2-bin,ca-certificates,libc6,libcrypt1,libexpat1,media-types' }}
+      config_path: images/apache/apache.conf
+      entrypoint: '["/usr/sbin/apache2"]'
+      cmd: '["-DFOREGROUND","-f","/etc/apache/apache.conf"]'
+      workdir: /var/www/html
+      exposed_ports: "8080"
+      writable_paths: /run/apache /var/log/apache2 /var/cache/apache2
+      smoke_mode: running
+      smoke_http_port: "8080"
+      smoke_http_path: /
+      smoke_command: /usr/sbin/apache2 -t -f /etc/apache/apache.conf
+      smoke_expected_output: "Syntax OK"
+      remove_shell: true
+      push_primary_tag: false
+      push: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.push) }}
+      generate_sbom: true
+      scan: true
+      fail_on_vulnerabilities: true
+      sign: true
+    secrets: inherit
+
+  apache-manifest:
+    needs: apache
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.push) }}
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/reusable-publish-image-manifest.yml
+    with:
+      image_name: apache
+      image_version: "2.4"
+      debian_suite: bookworm
+      sign: true
+    secrets: inherit

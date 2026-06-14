@@ -1,0 +1,68 @@
+name: Helm Charts
+
+on:
+  push:
+    paths:
+      - .github/workflows/helm-charts.yml
+      - charts/**
+  pull_request:
+    paths:
+      - .github/workflows/helm-charts.yml
+      - charts/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: helm-charts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-template:
+    name: ${{ matrix.chart }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        chart:
+          - apache
+          - caddy
+          - dotnet-aspnet
+          - dotnet-runtime
+          - haproxy
+          - java-jre
+          - mariadb
+          - memcached
+          - mongodb
+          - nginx
+          - node
+          - php-fpm
+          - postgresql
+          - python
+          - rabbitmq
+          - redis
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.18.4
+
+      - name: Build dependencies
+        run: helm dependency build "charts/${{ matrix.chart }}"
+
+      - name: Lint chart
+        run: helm lint "charts/${{ matrix.chart }}"
+
+      - name: Render chart
+        run: helm template "dhi-${{ matrix.chart }}" "charts/${{ matrix.chart }}" >/tmp/rendered.yaml
+
+      - name: Render OpenShift mode
+        run: helm template "dhi-${{ matrix.chart }}-openshift" "charts/${{ matrix.chart }}" --set openshift.enabled=true >/tmp/rendered-openshift.yaml
+
+      - name: Render NetworkPolicy mode
+        run: helm template "dhi-${{ matrix.chart }}-network-policy" "charts/${{ matrix.chart }}" --set networkPolicy.enabled=true >/tmp/rendered-network-policy.yaml

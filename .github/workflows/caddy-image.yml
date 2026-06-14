@@ -1,0 +1,101 @@
+name: Build Caddy image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/reusable-build-debian-image.yml
+      - .github/workflows/reusable-publish-image-manifest.yml
+      - .github/workflows/caddy-image.yml
+      - images/caddy/**
+  pull_request:
+    paths:
+      - .github/workflows/reusable-build-debian-image.yml
+      - .github/workflows/reusable-publish-image-manifest.yml
+      - .github/workflows/caddy-image.yml
+      - images/caddy/**
+  workflow_dispatch:
+    inputs:
+      push:
+        description: Push to the configured registry after build, smoke test, SBOM, and scan.
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: caddy-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  caddy:
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - debian_arch: amd64
+            platform: linux/amd64
+          - debian_arch: arm64
+            platform: linux/arm64
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/reusable-build-debian-image.yml
+    with:
+      image_name: caddy
+      image_version: "2"
+      debian_suite: bookworm
+      debian_arch: ${{ matrix.target.debian_arch }}
+      platform: ${{ matrix.target.platform }}
+      packages: ca-certificates
+      post_packages: caddy
+      extra_apt_key_urls: https://dl.cloudsmith.io/public/caddy/stable/gpg.key
+      extra_apt_sources: deb [signed-by=/etc/apt/trusted.gpg.d/dif-extra-1.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main
+      runtime_closure: true
+      runtime_closure_binaries: /usr/bin/caddy
+      runtime_closure_paths: |
+        /etc/caddy
+        /etc/ssl/certs
+      forbidden_packages: apt,libapt-pkg6.0,debian-archive-keyring,gpgv,bash,dash,dpkg
+      allowed_packages: ca-certificates,caddy,libc6
+      config_path: images/caddy/Caddyfile
+      entrypoint: '["/usr/bin/caddy"]'
+      cmd: '["run","--config","/etc/caddy/caddy.conf","--adapter","caddyfile"]'
+      workdir: /srv
+      exposed_ports: "8080"
+      environment: |
+        XDG_CONFIG_HOME=/config
+        XDG_DATA_HOME=/data
+      writable_paths: /config /data /srv
+      smoke_mode: running
+      smoke_http_port: "8080"
+      smoke_http_path: /
+      smoke_http_expected_body: "Caddy is running"
+      smoke_command: /usr/bin/caddy validate --config /etc/caddy/caddy.conf --adapter caddyfile
+      smoke_expected_output: "Valid configuration"
+      remove_shell: true
+      push_primary_tag: false
+      push: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.push) }}
+      generate_sbom: true
+      scan: true
+      fail_on_vulnerabilities: true
+      trivyignores: images/caddy/trivyignore.txt
+      sign: true
+    secrets: inherit
+
+  caddy-manifest:
+    needs: caddy
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.push) }}
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/reusable-publish-image-manifest.yml
+    with:
+      image_name: caddy
+      image_version: "2"
+      debian_suite: bookworm
+      sign: true
+    secrets: inherit

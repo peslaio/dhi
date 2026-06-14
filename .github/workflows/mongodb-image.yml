@@ -1,0 +1,86 @@
+name: Build MongoDB image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/reusable-build-debian-image.yml
+      - .github/workflows/reusable-publish-image-manifest.yml
+      - .github/workflows/mongodb-image.yml
+      - images/mongodb/**
+  pull_request:
+    paths:
+      - .github/workflows/reusable-build-debian-image.yml
+      - .github/workflows/reusable-publish-image-manifest.yml
+      - .github/workflows/mongodb-image.yml
+      - images/mongodb/**
+  workflow_dispatch:
+    inputs:
+      push:
+        description: Push to the configured registry after build, smoke test, SBOM, and scan.
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: mongodb-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mongodb:
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - debian_arch: amd64
+            platform: linux/amd64
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/reusable-build-debian-image.yml
+    with:
+      image_name: mongodb
+      image_version: "8.0"
+      debian_suite: bookworm
+      debian_arch: ${{ matrix.target.debian_arch }}
+      platform: ${{ matrix.target.platform }}
+      packages: ca-certificates
+      post_packages: mongodb-org-server,mongodb-mongosh
+      extra_apt_key_urls: https://pgp.mongodb.com/server-8.0.asc
+      extra_apt_sources: deb [ signed-by=/etc/apt/trusted.gpg.d/dif-extra-1.gpg ] https://repo.mongodb.org/apt/debian bookworm/mongodb-org/8.0 main
+      cmd: '["/usr/bin/mongod","--version"]'
+      workdir: /data/db
+      exposed_ports: "27017"
+      config_path: images/mongodb/mongod.conf
+      runtime_user_name: mongodb
+      runtime_home: /data/db
+      writable_paths: /data/db /run/mongodb /var/lib/mongodb /var/log/mongodb
+      smoke_mode: oneshot
+      smoke_command: /usr/bin/mongod --config /etc/mongodb/mongodb.conf --version
+      smoke_expected_output: db version v8.0
+      push_primary_tag: false
+      push: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.push) }}
+      generate_sbom: true
+      scan: true
+      fail_on_vulnerabilities: true
+      sign: true
+    secrets: inherit
+
+  mongodb-manifest:
+    needs: mongodb
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.push) }}
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/reusable-publish-image-manifest.yml
+    with:
+      image_name: mongodb
+      image_version: "8.0"
+      debian_suite: bookworm
+      debian_arches: amd64
+      sign: true
+    secrets: inherit

@@ -1,0 +1,177 @@
+nameOverride: ""
+fullnameOverride: ""
+commonLabels: {}
+commonAnnotations: {}
+
+replicaCount: 1
+workload:
+  type: statefulset
+updateStrategy:
+  type: RollingUpdate
+
+image:
+  registry: ghcr.io
+  repository: tpesla/postgresql
+  tag: 15-bookworm
+  digest: ""
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  automountServiceAccountToken: false
+
+podLabels: {}
+podAnnotations: {}
+podSecurityContext:
+  enabled: true
+  fsGroup: 0
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  enabled: true
+  runAsUser: 10001
+  runAsGroup: 0
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop:
+      - ALL
+
+command:
+  - /bin/sh
+  - -ec
+args:
+  - |
+    export PATH="/usr/lib/postgresql/15/bin:$PATH"
+    export PGDATA="${PGDATA:-/var/lib/postgresql/data}"
+    mkdir -p "$PGDATA" /run/postgresql
+    if [ ! -s "$PGDATA/PG_VERSION" ]; then
+      if [ -n "${POSTGRES_PASSWORD:-}" ]; then
+        printf "%s" "$POSTGRES_PASSWORD" > /tmp/postgres-password
+        initdb -D "$PGDATA" --username="${POSTGRES_USER:-postgres}" --pwfile=/tmp/postgres-password --auth-local=trust --auth-host=scram-sha-256
+        rm -f /tmp/postgres-password
+        echo "host all all 0.0.0.0/0 scram-sha-256" >> "$PGDATA/pg_hba.conf"
+      else
+        initdb -D "$PGDATA" --username="${POSTGRES_USER:-postgres}" --auth-local=trust --auth-host=trust
+        echo "host all all 0.0.0.0/0 trust" >> "$PGDATA/pg_hba.conf"
+      fi
+      echo "listen_addresses = '*'" >> "$PGDATA/postgresql.conf"
+    fi
+    exec postgres -D "$PGDATA" -p 5432
+env:
+  PGDATA: /var/lib/postgresql/data
+  POSTGRES_USER: postgres
+  POSTGRES_PASSWORD: ""
+extraEnvVars: []
+extraEnvVarsCM: ""
+extraEnvVarsSecret: ""
+extraEnvFrom: []
+
+containerPorts:
+  - name: postgresql
+    containerPort: 5432
+    protocol: TCP
+service:
+  enabled: true
+  type: ClusterIP
+  ports:
+    - name: postgresql
+      port: 5432
+      targetPort: postgresql
+      protocol: TCP
+  annotations: {}
+
+config:
+  enabled: false
+  filename: postgresql.conf
+  mountPath: /etc/postgresql/postgresql.conf
+  data: {}
+
+persistence:
+  enabled: true
+  volumeClaimTemplate: true
+  existingClaim: ""
+  storageClass: ""
+  annotations: {}
+  accessModes:
+    - ReadWriteOnce
+  size: 8Gi
+  mountPath: /var/lib/postgresql
+
+emptyDirs:
+  - name: run
+    mountPath: /run/postgresql
+  - name: logs
+    mountPath: /var/log/postgresql
+extraVolumes: []
+extraVolumeMounts: []
+initContainers: []
+sidecars: []
+resources: {}
+lifecycle: {}
+
+livenessProbe:
+  enabled: true
+  tcpSocket:
+    port: postgresql
+  initialDelaySeconds: 30
+  periodSeconds: 10
+readinessProbe:
+  enabled: true
+  tcpSocket:
+    port: postgresql
+  initialDelaySeconds: 10
+  periodSeconds: 10
+startupProbe:
+  enabled: true
+  tcpSocket:
+    port: postgresql
+  failureThreshold: 60
+  periodSeconds: 5
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+pdb:
+  create: false
+  minAvailable: ""
+  maxUnavailable: 1
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts: []
+  tls: []
+
+openshift:
+  enabled: false
+
+metrics:
+  enabled: false
+
+networkPolicy:
+  enabled: false
+  allowExternal: true
+  ingress: []
+  egress: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+priorityClassName: ""

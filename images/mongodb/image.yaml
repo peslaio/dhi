@@ -1,0 +1,74 @@
+name: mongodb
+version: "8.0"
+profile: runtime
+
+base:
+  distribution: debian
+  suite: bookworm
+  architectures:
+    - amd64
+  mirror: http://deb.debian.org/debian
+  securityMirror: http://security.debian.org/debian-security
+  variant: minbase
+
+packages:
+  install:
+    - ca-certificates
+    - mongodb-org-server
+    - mongodb-mongosh
+  remove:
+    - apt
+
+user:
+  name: mongodb
+  uid: 10001
+  gid: 0
+  home: /data/db
+  shell: /usr/sbin/nologin
+
+paths:
+  - path: /data/db
+    owner: 10001:0
+    mode: "0770"
+  - path: /run/mongodb
+    owner: 10001:0
+    mode: "0770"
+  - path: /var/lib/mongodb
+    owner: 10001:0
+    mode: "0770"
+  - path: /var/log/mongodb
+    owner: 10001:0
+    mode: "0770"
+  - path: /etc/mongodb
+    owner: root:0
+    mode: "0750"
+
+files:
+  - source: mongod.conf
+    destination: /etc/mongodb/mongodb.conf
+    owner: root:0
+    mode: "0640"
+
+cmd:
+  - /usr/bin/mongod
+  - --version
+
+ports:
+  - 27017
+
+hardening:
+  removeApt: true
+  removeDpkg: false
+  cleanAptCache: true
+  cleanDocs: true
+  cleanManPages: true
+  cleanLogs: true
+  cleanTmp: true
+  runAsNonRoot: true
+  openshiftCompatible: true
+
+oci:
+  registry: ghcr.io
+  namespace: ""
+  image: mongodb
+  tag: "8.0-bookworm"

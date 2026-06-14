@@ -1,0 +1,97 @@
+name: Build HAProxy image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/reusable-build-debian-image.yml
+      - .github/workflows/reusable-publish-image-manifest.yml
+      - .github/workflows/haproxy-image.yml
+      - images/haproxy/**
+  pull_request:
+    paths:
+      - .github/workflows/reusable-build-debian-image.yml
+      - .github/workflows/reusable-publish-image-manifest.yml
+      - .github/workflows/haproxy-image.yml
+      - images/haproxy/**
+  workflow_dispatch:
+    inputs:
+      push:
+        description: Push to the configured registry after build, smoke test, SBOM, and scan.
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: haproxy-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  haproxy:
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - debian_arch: amd64
+            platform: linux/amd64
+          - debian_arch: arm64
+            platform: linux/arm64
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/reusable-build-debian-image.yml
+    with:
+      image_name: haproxy
+      image_version: "2.6"
+      debian_suite: bookworm
+      debian_arch: ${{ matrix.target.debian_arch }}
+      platform: ${{ matrix.target.platform }}
+      packages: ca-certificates,haproxy
+      runtime_closure: true
+      runtime_closure_binaries: /usr/sbin/haproxy
+      runtime_closure_paths: |
+        /etc/haproxy
+        /etc/ssl/certs
+        /usr/lib/*/ossl-modules
+      forbidden_packages: apt,libapt-pkg6.0,debian-archive-keyring,gpgv,bash,dash,dpkg
+      allowed_packages: ${{ matrix.target.debian_arch == 'amd64' && 'ca-certificates,haproxy,libc6,libcap2,libcrypt1,libgcc-s1,libgpg-error0,liblzma5,libssl3' || 'ca-certificates,haproxy,libc6,libcap2,libcrypt1,libgcc-s1,libgpg-error0,liblzma5' }}
+      config_path: images/haproxy/haproxy.conf
+      entrypoint: '["/usr/sbin/haproxy"]'
+      cmd: '["-f","/etc/haproxy/haproxy.conf","-db"]'
+      workdir: /var/lib/haproxy
+      exposed_ports: "8080"
+      runtime_user_name: haproxy
+      runtime_home: /var/lib/haproxy
+      writable_paths: /run/haproxy /var/lib/haproxy
+      smoke_command: /usr/sbin/haproxy -c -f /etc/haproxy/haproxy.conf
+      smoke_expected_output: "Configuration file is valid"
+      smoke_mode: running
+      smoke_http_port: "8080"
+      smoke_http_path: /healthz
+      smoke_http_expected_body: OK
+      remove_shell: true
+      push_primary_tag: false
+      push: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.push) }}
+      generate_sbom: true
+      scan: true
+      fail_on_vulnerabilities: true
+      sign: true
+    secrets: inherit
+
+  haproxy-manifest:
+    needs: haproxy
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.push) }}
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/reusable-publish-image-manifest.yml
+    with:
+      image_name: haproxy
+      image_version: "2.6"
+      debian_suite: bookworm
+      sign: true
+    secrets: inherit

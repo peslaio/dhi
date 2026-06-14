@@ -1,0 +1,79 @@
+name: nginx
+version: "1.22"
+profile: runtime
+
+base:
+  distribution: debian
+  suite: bookworm
+  architectures:
+    - amd64
+    - arm64
+  mirror: http://deb.debian.org/debian
+  securityMirror: http://security.debian.org/debian-security
+  variant: minbase
+
+packages:
+  install:
+    - ca-certificates
+    - nginx
+  remove:
+    - apt
+
+user:
+  name: nginx
+  uid: 10001
+  gid: 0
+  home: /var/www/html
+  shell: /usr/sbin/nologin
+
+paths:
+  - path: /run/nginx
+    owner: 10001:0
+    mode: "0770"
+  - path: /var/cache/nginx
+    owner: 10001:0
+    mode: "0770"
+  - path: /var/log/nginx
+    owner: 10001:0
+    mode: "0770"
+  - path: /var/lib/nginx
+    owner: 10001:0
+    mode: "0770"
+  - path: /etc/nginx
+    owner: root:0
+    mode: "0750"
+
+files:
+  - source: nginx.conf
+    destination: /etc/nginx/nginx.conf
+    owner: root:0
+    mode: "0640"
+
+entrypoint:
+  - /usr/sbin/nginx
+
+cmd:
+  - -g
+  - daemon off;
+  - -c
+  - /etc/nginx/nginx.conf
+
+ports:
+  - 8080
+
+hardening:
+  removeApt: true
+  removeDpkg: false
+  cleanAptCache: true
+  cleanDocs: true
+  cleanManPages: true
+  cleanLogs: true
+  cleanTmp: true
+  runAsNonRoot: true
+  openshiftCompatible: true
+
+oci:
+  registry: ghcr.io
+  namespace: ""
+  image: nginx
+  tag: "1.22-bookworm"

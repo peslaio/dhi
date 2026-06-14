@@ -1,0 +1,83 @@
+name: Build MariaDB image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/reusable-build-debian-image.yml
+      - .github/workflows/reusable-publish-image-manifest.yml
+      - .github/workflows/mariadb-image.yml
+      - images/mariadb/**
+  pull_request:
+    paths:
+      - .github/workflows/reusable-build-debian-image.yml
+      - .github/workflows/reusable-publish-image-manifest.yml
+      - .github/workflows/mariadb-image.yml
+      - images/mariadb/**
+  workflow_dispatch:
+    inputs:
+      push:
+        description: Push to the configured registry after build, smoke test, SBOM, and scan.
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: mariadb-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mariadb:
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - debian_arch: amd64
+            platform: linux/amd64
+          - debian_arch: arm64
+            platform: linux/arm64
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/reusable-build-debian-image.yml
+    with:
+      image_name: mariadb
+      image_version: "10.11"
+      debian_suite: bookworm
+      debian_arch: ${{ matrix.target.debian_arch }}
+      platform: ${{ matrix.target.platform }}
+      packages: ca-certificates,mariadb-server
+      cmd: '["/usr/sbin/mariadbd","--version"]'
+      workdir: /var/lib/mysql
+      exposed_ports: "3306"
+      runtime_user_name: mysql
+      runtime_home: /var/lib/mysql
+      writable_paths: /var/lib/mysql /run/mysqld /var/log/mysql
+      smoke_mode: oneshot
+      smoke_command: /usr/sbin/mariadbd --version
+      smoke_expected_output: mariadbd
+      push_primary_tag: false
+      push: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.push) }}
+      generate_sbom: true
+      scan: true
+      fail_on_vulnerabilities: true
+      sign: true
+    secrets: inherit
+
+  mariadb-manifest:
+    needs: mariadb
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.push) }}
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/reusable-publish-image-manifest.yml
+    with:
+      image_name: mariadb
+      image_version: "10.11"
+      debian_suite: bookworm
+      sign: true
+    secrets: inherit

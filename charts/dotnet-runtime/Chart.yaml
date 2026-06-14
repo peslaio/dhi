@@ -1,0 +1,10 @@
+apiVersion: v2
+name: dotnet-runtime
+description: .NET runtime workload chart for the Debian Image Forge hardened image.
+type: application
+version: 0.1.0
+appVersion: "8.0"
+dependencies:
+  - name: dhi-common
+    version: 0.1.0
+    repository: file://../dhi-common

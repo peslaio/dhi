@@ -1,0 +1,110 @@
+name: Build ASP.NET runtime images
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/reusable-build-debian-image.yml
+      - .github/workflows/reusable-publish-image-manifest.yml
+      - .github/workflows/dotnet-aspnet-images.yml
+      - images/dotnet-aspnet/**
+  pull_request:
+    paths:
+      - .github/workflows/reusable-build-debian-image.yml
+      - .github/workflows/reusable-publish-image-manifest.yml
+      - .github/workflows/dotnet-aspnet-images.yml
+      - images/dotnet-aspnet/**
+  workflow_dispatch:
+    inputs:
+      push:
+        description: Push to the configured registry after build, smoke test, SBOM, and scan.
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: dotnet-aspnet-images-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dotnet-aspnet:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dotnet_version: "8.0"
+            debian_arch: amd64
+            platform: linux/amd64
+          - dotnet_version: "9.0"
+            debian_arch: amd64
+            platform: linux/amd64
+          - dotnet_version: "10.0"
+            debian_arch: amd64
+            platform: linux/amd64
+          - dotnet_version: "10.0"
+            debian_arch: arm64
+            platform: linux/arm64
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/reusable-build-debian-image.yml
+    with:
+      image_name: dotnet-aspnet
+      image_version: ${{ matrix.dotnet_version }}
+      debian_suite: bookworm
+      debian_arch: ${{ matrix.debian_arch }}
+      platform: ${{ matrix.platform }}
+      packages: ca-certificates
+      post_packages: aspnetcore-runtime-${{ matrix.dotnet_version }}
+      extra_apt_key_urls: |
+        https://packages.microsoft.com/keys/microsoft.asc
+      extra_apt_sources: |
+        deb [arch=amd64,arm64] https://packages.microsoft.com/debian/12/prod bookworm main
+      cmd: '["/usr/bin/dotnet","--info"]'
+      workdir: /app
+      exposed_ports: "8080"
+      environment: |
+        DOTNET_RUNNING_IN_CONTAINER=true
+        ASPNETCORE_HTTP_PORTS=8080
+      runtime_user_name: dotnet
+      runtime_home: /home/dotnet
+      writable_paths: /app /home/dotnet
+      smoke_mode: oneshot
+      smoke_command: /usr/bin/dotnet --list-runtimes
+      smoke_expected_output: "Microsoft.AspNetCore.App"
+      push_primary_tag: false
+      push: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.push) }}
+      generate_sbom: true
+      scan: true
+      fail_on_vulnerabilities: true
+      sign: true
+    secrets: inherit
+
+  dotnet-aspnet-manifest:
+    needs: dotnet-aspnet
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.push) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dotnet_version: "8.0"
+            debian_arches: amd64
+          - dotnet_version: "9.0"
+            debian_arches: amd64
+          - dotnet_version: "10.0"
+            debian_arches: amd64 arm64
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/reusable-publish-image-manifest.yml
+    with:
+      image_name: dotnet-aspnet
+      image_version: ${{ matrix.dotnet_version }}
+      debian_suite: bookworm
+      debian_arches: ${{ matrix.debian_arches }}
+      sign: true
+    secrets: inherit

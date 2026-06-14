@@ -1,0 +1,97 @@
+name: Build Redis image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/reusable-build-debian-image.yml
+      - .github/workflows/reusable-publish-image-manifest.yml
+      - .github/workflows/redis-image.yml
+      - images/redis/**
+  pull_request:
+    paths:
+      - .github/workflows/reusable-build-debian-image.yml
+      - .github/workflows/reusable-publish-image-manifest.yml
+      - .github/workflows/redis-image.yml
+      - images/redis/**
+  workflow_dispatch:
+    inputs:
+      push:
+        description: Push to the configured registry after build, smoke test, SBOM, and scan.
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: redis-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  redis:
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - debian_arch: amd64
+            platform: linux/amd64
+            smoke_mode: running
+            smoke_command: /usr/bin/redis-cli ping
+            smoke_expected_output: PONG
+          - debian_arch: arm64
+            platform: linux/arm64
+            smoke_mode: oneshot
+            smoke_command: --version
+            smoke_expected_output: Redis server
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/reusable-build-debian-image.yml
+    with:
+      image_name: redis
+      image_version: "7.0"
+      debian_suite: bookworm
+      debian_arch: ${{ matrix.target.debian_arch }}
+      platform: ${{ matrix.target.platform }}
+      packages: ca-certificates,redis-server,redis-tools
+      runtime_closure: true
+      runtime_closure_binaries: /usr/bin/redis-server /usr/bin/redis-cli
+      runtime_closure_paths: |
+        /etc/redis
+      forbidden_packages: apt,libapt-pkg6.0,debian-archive-keyring,gpgv,bash,dash,dpkg
+      allowed_packages: libc6,libcap2,libgcc-s1,libgpg-error0,liblzma5,redis-server,redis-tools
+      entrypoint: '["/usr/bin/redis-server"]'
+      cmd: '["/etc/redis/redis.conf"]'
+      workdir: /data
+      exposed_ports: "6379"
+      config_path: images/redis/redis.conf
+      writable_paths: /data /run/redis /var/lib/redis
+      smoke_mode: ${{ matrix.target.smoke_mode }}
+      smoke_tcp_port: "6379"
+      smoke_command: ${{ matrix.target.smoke_command }}
+      smoke_expected_output: ${{ matrix.target.smoke_expected_output }}
+      remove_shell: true
+      push_primary_tag: false
+      push: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.push) }}
+      generate_sbom: true
+      scan: true
+      fail_on_vulnerabilities: true
+      sign: true
+    secrets: inherit
+
+  redis-manifest:
+    needs: redis
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.push) }}
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/reusable-publish-image-manifest.yml
+    with:
+      image_name: redis
+      image_version: "7.0"
+      debian_suite: bookworm
+      sign: true
+    secrets: inherit

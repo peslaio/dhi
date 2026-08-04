@@ -61,7 +61,7 @@ Logs, rendered Compose configuration, service state, container/image identity, a
 
 Pull requests and merge-queue candidates use one workflow without path filters. It validates the complete contract inventory, calculates affected families from the actual diff, calls the selected image workflows, downloads all per-leg results, and exposes one stable `Image contract gate` job.
 
-Shared runner, schema, harness, or reusable-build changes select every declared leg. Documentation-only changes select none. Scheduled runs exercise all legs. The gate compares the exact expected and observed leg sets; missing, duplicate, unexpected, malformed, or non-passing results fail the gate.
+Shared runner, schema, harness, or reusable-build changes select every declared leg. Documentation-only changes select none. Scheduled runs exercise all legs. Result artifacts are attempt-scoped, and the gate compares the current attempt's exact expected and observed leg sets. Stale-attempt results are ignored and cannot satisfy that set, so missing current results fail alongside duplicate, unexpected, malformed, or non-passing results. A retry must therefore use **Re-run all jobs**.
 
 Publishing is explicitly disabled for centrally orchestrated validation. ADR 0002 subsequently moved publication out of family workflows and into a release-only tested-artifact publisher.
 

@@ -7,10 +7,12 @@ import pathlib
 import re
 import subprocess
 import sys
+import time
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 LOCK_PATH = ROOT / "tests" / "functional" / "fixtures.lock.json"
+TIMEOUT_PATH = ROOT / "tests" / "functional" / "timeout.py"
 EXPECTED_FIXTURES = {
     "dotnet-sdk-8.0",
     "dotnet-sdk-9.0",
@@ -23,6 +25,10 @@ EXPECTED_PLATFORMS = ["linux/amd64", "linux/arm64"]
 REFERENCE_PATTERN = re.compile(
     r"^[^\s@]+:[^\s@]+@sha256:[0-9a-f]{64}$"
 )
+PLATFORM_PATTERN = re.compile(r"^linux/(amd64|arm64)(?:/[^/\s]+)?$")
+PULL_ATTEMPTS = 3
+PULL_TIMEOUT_SECONDS = 180
+PULL_BACKOFF_SECONDS = 5
 
 
 class FixtureError(RuntimeError):
@@ -117,6 +123,69 @@ def command_validate(fixtures, online):
     )
 
 
+def pull_fixture(name, reference, platform):
+    last_status = None
+    for attempt in range(1, PULL_ATTEMPTS + 1):
+        print(
+            f"Pulling fixture {name} (attempt {attempt}/{PULL_ATTEMPTS})",
+            file=sys.stderr,
+            flush=True,
+        )
+        try:
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(TIMEOUT_PATH),
+                    "--timeout",
+                    str(PULL_TIMEOUT_SECONDS),
+                    "--kill-after",
+                    "5",
+                    "--",
+                    "docker",
+                    "pull",
+                    "--platform",
+                    platform,
+                    reference,
+                ],
+                check=False,
+            )
+        except OSError as exc:
+            raise FixtureError(f"cannot execute fixture pull for {name}: {exc}") from exc
+        last_status = completed.returncode
+        if completed.returncode == 0:
+            return
+        if attempt < PULL_ATTEMPTS:
+            delay = PULL_BACKOFF_SECONDS * attempt
+            print(
+                f"Fixture pull for {name} exited {completed.returncode}; "
+                f"retrying in {delay}s",
+                file=sys.stderr,
+                flush=True,
+            )
+            time.sleep(delay)
+    raise FixtureError(
+        f"cannot pull fixture {name} after {PULL_ATTEMPTS} attempts "
+        f"(last status {last_status}): {reference}"
+    )
+
+
+def command_pull(fixtures, names, platform):
+    if len(names) != len(set(names)):
+        raise FixtureError("fixture pull names must be unique")
+    match = PLATFORM_PATTERN.fullmatch(platform)
+    if not match:
+        raise FixtureError(f"unsupported fixture pull platform: {platform}")
+    base_platform = f"linux/{match.group(1)}"
+    for name in names:
+        try:
+            reference = fixtures[name]["reference"]
+        except KeyError:
+            raise FixtureError(f"unknown fixture: {name}") from None
+        if base_platform not in fixtures[name]["platforms"]:
+            raise FixtureError(f"fixture {name} does not declare platform {platform}")
+        pull_fixture(name, reference, platform)
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
@@ -124,6 +193,9 @@ def parse_args():
     validate.add_argument("--online", action="store_true")
     resolve = commands.add_parser("resolve")
     resolve.add_argument("name")
+    pull = commands.add_parser("pull")
+    pull.add_argument("--platform", required=True)
+    pull.add_argument("names", nargs="+")
     return parser.parse_args()
 
 
@@ -132,11 +204,13 @@ def main():
     fixtures = load_lock()
     if args.command == "validate":
         command_validate(fixtures, args.online)
-    else:
+    elif args.command == "resolve":
         try:
             print(fixtures[args.name]["reference"])
         except KeyError:
             raise FixtureError(f"unknown fixture: {args.name}")
+    else:
+        command_pull(fixtures, args.names, args.platform)
 
 
 if __name__ == "__main__":

@@ -371,7 +371,7 @@ jobs:
           NODE_OPTIONS: --disable-warning=DEP0005
         uses: actions/download-artifact@v8
         with:
-          pattern: image-contract-result--*
+          pattern: image-contract-result--*--attempt-${{ github.run_attempt }}
           path: artifacts/results
 
       - name: Aggregate selected contract results

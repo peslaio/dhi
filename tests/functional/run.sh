@@ -82,6 +82,7 @@ evidence_failed=false
 cleanup_failed=false
 finalizing=false
 service_names=()
+fixture_names=()
 compose=()
 
 warning() {
@@ -510,6 +511,30 @@ fi
 while IFS= read -r service; do
   [ -n "$service" ] && service_names+=("$service")
 done <<<"$service_output"
+
+if grep -Fq -- "$fixture_python" "$artifact_dir/compose-config.json"; then
+  fixture_names+=(harness-python)
+fi
+if grep -Fq -- "$fixture_java" "$artifact_dir/compose-config.json"; then
+  fixture_names+=(java-builder)
+fi
+if grep -Fq -- "$fixture_nginx" "$artifact_dir/compose-config.json"; then
+  fixture_names+=(php-nginx)
+fi
+if [ -n "$fixture_dotnet" ] && grep -Fq -- "$fixture_dotnet" "$artifact_dir/compose-config.json"; then
+  fixture_names+=("dotnet-sdk-${image_version}")
+fi
+
+if [ "${#fixture_names[@]}" -gt 0 ]; then
+  python3 "$fixture_helper" pull --platform "$platform" "${fixture_names[@]}" 2>&1 \
+    | tee "$artifact_dir/fixture-pull.log"
+  fixture_pull_statuses=("${PIPESTATUS[@]}")
+  if [ "${fixture_pull_statuses[1]}" -ne 0 ]; then
+    fail_run "$EXIT_INFRASTRUCTURE" infrastructure_failure fixture-pull "failed to persist fixture pull output" "${fixture_pull_statuses[1]}"
+  elif [ "${fixture_pull_statuses[0]}" -ne 0 ]; then
+    fail_run "$EXIT_INFRASTRUCTURE" infrastructure_failure fixture-pull "digest-pinned functional fixture pull failed after bounded retries" "${fixture_pull_statuses[0]}"
+  fi
+fi
 
 run_logged "$build_timeout_seconds" "$artifact_dir/compose-build.log" \
   "${compose[@]}" build --pull=false

@@ -28,25 +28,25 @@ user:
 
 paths:
   - path: /tmp
-    owner: 10001:0
+    owner: "10001:0"
     mode: "1777"
   - path: /run/php-fpm
-    owner: 10001:0
+    owner: "10001:0"
     mode: "0770"
   - path: /var/log/php8.2-fpm
-    owner: 10001:0
+    owner: "10001:0"
     mode: "0770"
   - path: /var/www/html
-    owner: 10001:0
+    owner: "10001:0"
     mode: "0770"
   - path: /etc/php-fpm
-    owner: root:0
+    owner: "root:0"
     mode: "0750"
 
 files:
   - source: php-fpm.conf
     destination: /etc/php-fpm/php-fpm.conf
-    owner: root:0
+    owner: "root:0"
     mode: "0640"
 
 entrypoint:

@@ -28,13 +28,13 @@ user:
 
 paths:
   - path: /var/lib/postgresql
-    owner: 10001:0
+    owner: "10001:0"
     mode: "0770"
   - path: /run/postgresql
-    owner: 10001:0
+    owner: "10001:0"
     mode: "0770"
   - path: /var/log/postgresql
-    owner: 10001:0
+    owner: "10001:0"
     mode: "0770"
 
 cmd:

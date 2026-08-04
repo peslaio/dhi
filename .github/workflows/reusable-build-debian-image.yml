@@ -876,6 +876,9 @@ jobs:
           IMAGE_NAME: ${{ inputs.image_name }}
           REMOVE_SHELL: ${{ inputs.remove_shell }}
           RUN_USER: ${{ inputs.run_user }}
+          RUNTIME_USER_NAME: ${{ inputs.runtime_user_name }}
+          RUNTIME_HOME: ${{ inputs.runtime_home }}
+          RUNTIME_SHELL: ${{ inputs.runtime_shell }}
           RUN_UID: ${{ inputs.run_uid }}
           RUN_GID: ${{ inputs.run_gid }}
         run: |
@@ -895,6 +898,22 @@ jobs:
 
           rootfs_listing="/tmp/dif-${IMAGE_NAME}-rootfs-files"
           docker export "$container_id" | tar -tf - > "$rootfs_listing"
+
+          runtime_user_name="${RUNTIME_USER_NAME:-$IMAGE_NAME}"
+          passwd_file="/tmp/dif-${IMAGE_NAME}-passwd"
+          if ! docker cp "$container_id:/etc/passwd" "$passwd_file"; then
+            echo "Runtime image is missing a readable /etc/passwd" >&2
+            exit 1
+          fi
+          if ! runtime_passwd_identity="$(awk -F: -v name="$runtime_user_name" '$1 == name { print $1 ":" $3 ":" $4 ":" $6 ":" $7; count++ } END { if (count != 1) exit 1 }' "$passwd_file")"; then
+            echo "Runtime image must contain exactly one passwd entry for $runtime_user_name" >&2
+            exit 1
+          fi
+          expected_passwd_identity="${runtime_user_name}:${RUN_UID}:${RUN_GID}:${RUNTIME_HOME}:${RUNTIME_SHELL}"
+          if [ "$runtime_passwd_identity" != "$expected_passwd_identity" ]; then
+            echo "Runtime passwd entry mismatch: expected $expected_passwd_identity, got $runtime_passwd_identity" >&2
+            exit 1
+          fi
 
           apt_entries="$(grep -Ex 'usr/bin/apt|usr/bin/apt-cache|usr/bin/apt-config|usr/bin/apt-get|usr/bin/apt-key' "$rootfs_listing" || true)"
           if [ -n "$apt_entries" ]; then
@@ -1123,10 +1142,9 @@ jobs:
         if: ${{ always() && inputs.functional_test && (steps.functional.outcome == 'success' || hashFiles('artifacts/functional/**') != '') }}
         uses: actions/upload-artifact@v7
         with:
-          name: image-contract-result--${{ inputs.image_name }}--${{ inputs.image_version }}--${{ inputs.debian_arch }}
+          name: image-contract-result--${{ inputs.image_name }}--${{ inputs.image_version }}--${{ inputs.debian_arch }}--attempt-${{ github.run_attempt }}
           path: artifacts/functional
           if-no-files-found: error
-          overwrite: true
           retention-days: 14
 
       - name: Enforce functional application contract

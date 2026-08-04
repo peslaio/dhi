@@ -53,6 +53,7 @@ jobs:
       entrypoint: '["/usr/bin/caddy"]'
       cmd: '["run","--config","/etc/caddy/caddy.conf","--adapter","caddyfile"]'
       workdir: /srv
+      runtime_home: /srv
       exposed_ports: "8080"
       environment: |
         XDG_CONFIG_HOME=/config

@@ -28,25 +28,25 @@ user:
 
 paths:
   - path: /run/nginx
-    owner: 10001:0
+    owner: "10001:0"
     mode: "0770"
   - path: /var/cache/nginx
-    owner: 10001:0
+    owner: "10001:0"
     mode: "0770"
   - path: /var/log/nginx
-    owner: 10001:0
+    owner: "10001:0"
     mode: "0770"
   - path: /var/lib/nginx
-    owner: 10001:0
+    owner: "10001:0"
     mode: "0770"
   - path: /etc/nginx
-    owner: root:0
+    owner: "root:0"
     mode: "0750"
 
 files:
   - source: nginx.conf
     destination: /etc/nginx/nginx.conf
-    owner: root:0
+    owner: "root:0"
     mode: "0640"
 
 entrypoint:

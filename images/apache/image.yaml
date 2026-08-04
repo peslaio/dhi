@@ -28,22 +28,22 @@ user:
 
 paths:
   - path: /run/apache
-    owner: 10001:0
+    owner: "10001:0"
     mode: "0770"
   - path: /var/log/apache2
-    owner: 10001:0
+    owner: "10001:0"
     mode: "0770"
   - path: /var/cache/apache2
-    owner: 10001:0
+    owner: "10001:0"
     mode: "0770"
   - path: /etc/apache
-    owner: root:0
+    owner: "root:0"
     mode: "0750"
 
 files:
   - source: apache.conf
     destination: /etc/apache/apache.conf
-    owner: root:0
+    owner: "root:0"
     mode: "0640"
 
 entrypoint:

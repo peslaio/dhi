@@ -33,6 +33,7 @@ module DhiContracts
   USER_KEYS = %w[name uid gid home shell].freeze
   PATH_KEYS = %w[path owner mode].freeze
   FILE_KEYS = %w[source destination owner mode].freeze
+  OWNER_PATTERN = /\A(?:0|[1-9][0-9]*|[a-z_][a-z0-9_-]*):(?:0|[1-9][0-9]*|[a-z_][a-z0-9_-]*)\z/
   HARDENING_KEYS = %w[
     removeApt removeDpkg cleanAptCache cleanDocs cleanManPages cleanLogs cleanTmp
     runAsNonRoot openshiftCompatible
@@ -96,8 +97,10 @@ module DhiContracts
   end
 
   def owner(value, context)
-    valid = (value.is_a?(String) && !value.empty?) || (value.is_a?(Integer) && value >= 0)
-    assert(valid, "#{context} must be a non-empty owner string or a non-negative integer")
+    assert(
+      value.is_a?(String) && value.match?(OWNER_PATTERN),
+      "#{context} must be a canonical user:group string"
+    )
     value
   end
 

@@ -29,22 +29,22 @@ user:
 
 paths:
   - path: /data
-    owner: 10001:0
+    owner: "10001:0"
     mode: "0770"
   - path: /run/redis
-    owner: 10001:0
+    owner: "10001:0"
     mode: "0770"
   - path: /var/lib/redis
-    owner: 10001:0
+    owner: "10001:0"
     mode: "0770"
   - path: /etc/redis
-    owner: root:0
+    owner: "root:0"
     mode: "0750"
 
 files:
   - source: redis.conf
     destination: /etc/redis/redis.conf
-    owner: root:0
+    owner: "root:0"
     mode: "0640"
 
 entrypoint:

@@ -28,10 +28,10 @@ user:
 
 paths:
   - path: /app
-    owner: 10001:0
+    owner: "10001:0"
     mode: "0770"
   - path: /home/node
-    owner: 10001:0
+    owner: "10001:0"
     mode: "0770"
 
 cmd:

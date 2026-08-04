@@ -512,6 +512,72 @@ class FixtureLockTests(unittest.TestCase):
         fixtures = fixturectl.load_lock()
         self.assertEqual(set(fixtures), fixturectl.EXPECTED_FIXTURES)
 
+    def test_fixture_pull_retries_with_bounded_backoff(self):
+        reference = fixturectl.load_lock()["harness-python"]["reference"]
+        outcomes = [
+            types.SimpleNamespace(returncode=1),
+            types.SimpleNamespace(returncode=124),
+            types.SimpleNamespace(returncode=0),
+        ]
+        with mock.patch.object(
+            fixturectl.subprocess, "run", side_effect=outcomes
+        ) as run, mock.patch.object(
+            fixturectl.time, "sleep"
+        ) as sleep, mock.patch.object(
+            fixturectl.sys, "stderr", new=io.StringIO()
+        ):
+            fixturectl.pull_fixture(
+                "harness-python", reference, "linux/arm64/v8"
+            )
+
+        self.assertEqual(run.call_count, 3)
+        sleep.assert_has_calls([mock.call(5), mock.call(10)])
+        for call in run.call_args_list:
+            command = call.args[0]
+            self.assertEqual(command[-5:], ["docker", "pull", "--platform", "linux/arm64/v8", reference])
+            self.assertIn(str(fixturectl.TIMEOUT_PATH), command)
+            self.assertEqual(call.kwargs, {"check": False})
+
+    def test_fixture_pull_exhaustion_is_explicit(self):
+        reference = fixturectl.load_lock()["harness-python"]["reference"]
+        outcomes = [types.SimpleNamespace(returncode=1)] * 3
+        with mock.patch.object(
+            fixturectl.subprocess, "run", side_effect=outcomes
+        ), mock.patch.object(fixturectl.time, "sleep") as sleep, mock.patch.object(
+            fixturectl.sys, "stderr", new=io.StringIO()
+        ):
+            with self.assertRaisesRegex(
+                fixturectl.FixtureError,
+                r"harness-python after 3 attempts \(last status 1\)",
+            ):
+                fixturectl.pull_fixture(
+                    "harness-python", reference, "linux/amd64"
+                )
+        sleep.assert_has_calls([mock.call(5), mock.call(10)])
+
+    def test_fixture_pull_rejects_duplicate_unknown_or_invalid_inputs(self):
+        fixtures = fixturectl.load_lock()
+        for names, platform, message in (
+            (["harness-python", "harness-python"], "linux/amd64", "unique"),
+            (["missing"], "linux/amd64", "unknown fixture"),
+            (["harness-python"], "windows/amd64", "unsupported"),
+        ):
+            with self.subTest(names=names, platform=platform):
+                with self.assertRaisesRegex(fixturectl.FixtureError, message):
+                    fixturectl.command_pull(fixtures, names, platform)
+
+    def test_fixture_pull_uses_only_requested_lock_entries(self):
+        fixtures = fixturectl.load_lock()
+        with mock.patch.object(fixturectl, "pull_fixture") as pull:
+            fixturectl.command_pull(
+                fixtures, ["php-nginx"], "linux/arm64/v8"
+            )
+        pull.assert_called_once_with(
+            "php-nginx",
+            fixtures["php-nginx"]["reference"],
+            "linux/arm64/v8",
+        )
+
 
 class PlannerTests(unittest.TestCase):
     def test_selected_families_cannot_hide_expected_legs(self):
@@ -735,6 +801,217 @@ class WorkflowPolicyTests(unittest.TestCase):
         "reusable-publish-image-manifest.yml",
         "reusable-publish-tested-image.yml",
     }
+
+    def test_image_spec_owners_are_canonical_strings(self):
+        root = pathlib.Path(__file__).resolve().parents[2]
+        spec_paths = sorted((root / "images").glob("**/image.yaml"))
+        owner_lines = [
+            line.strip()
+            for path in spec_paths
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip().startswith("owner:")
+        ]
+        self.assertEqual(len(owner_lines), 65)
+        for owner_line in owner_lines:
+            with self.subTest(owner=owner_line):
+                self.assertRegex(
+                    owner_line,
+                    r'^owner: "(?:0|[1-9][0-9]*|[a-z_][a-z0-9_-]*):'
+                    r'(?:0|[1-9][0-9]*|[a-z_][a-z0-9_-]*)"$',
+                )
+
+        validation = subprocess.run(
+            ["ruby", "tests/functional/contractctl.rb", "validate"],
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        self.assertEqual(validation.returncode, 0, validation.stderr)
+
+        owner_validation = subprocess.run(
+            [
+                "ruby",
+                "-e",
+                """
+require "yaml"
+require File.expand_path("tests/functional/contractctl", Dir.pwd)
+
+valid = %w[0:0 10001:0 root:0 10001:app app:app _svc:0]
+invalid = [
+  YAML.safe_load("owner: 10001:0")["owner"],
+  10001, "", "10001", ":0", "10001:", "root:0:0", "root: 0",
+  "-1:0", "+1:0", "01:0", "root/evil:0", "root;id:0", "$(id):0"
+]
+
+valid.each { |value| DhiContracts.owner(value, "owner") }
+invalid.each do |value|
+  begin
+    DhiContracts.owner(value, "owner")
+  rescue DhiContracts::ContractError
+    next
+  end
+  abort("invalid owner was accepted: #{value.inspect}")
+end
+""",
+            ],
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        self.assertEqual(owner_validation.returncode, 0, owner_validation.stderr)
+
+    def test_image_spec_runtime_identity_matches_effective_workflow_inputs(self):
+        root = pathlib.Path(__file__).resolve().parents[2]
+        workflow_dir = root / ".github" / "workflows"
+        reusable = (
+            workflow_dir / "reusable-build-debian-image.yml"
+        ).read_text(encoding="utf-8")
+
+        def input_default(key):
+            tail = reusable.split(f"\n      {key}:\n", 1)[1]
+            next_input = re.search(r"(?m)^      [a-z_]+:\s*$", tail)
+            block = tail[: next_input.start()] if next_input else tail
+            match = re.search(r"(?m)^        default:\s*(.*?)\s*$", block)
+            self.assertIsNotNone(match, f"missing default for {key}")
+            return match.group(1).strip().strip("\"'")
+
+        defaults = {
+            key: input_default(key)
+            for key in (
+                "run_user",
+                "runtime_user_name",
+                "runtime_home",
+                "runtime_shell",
+                "run_uid",
+                "run_gid",
+            )
+        }
+
+        def scalar(block, key, default=None):
+            match = re.search(
+                rf"(?m)^      {re.escape(key)}:\s*(.+?)\s*$", block
+            )
+            if not match:
+                return default
+            return match.group(1).strip().strip("\"'")
+
+        workflows = {}
+        for workflow_name in self.CORE_WORKFLOWS:
+            workflow = (workflow_dir / workflow_name).read_text(encoding="utf-8")
+            build_call = workflow.split(
+                "uses: ./.github/workflows/reusable-build-debian-image.yml", 1
+            )[1].split("\n\n  contract-aggregate:", 1)[0]
+            family = scalar(build_call, "image_name")
+            self.assertIsNotNone(family)
+            runtime_name = scalar(
+                build_call, "runtime_user_name", defaults["runtime_user_name"]
+            ) or family
+            uid = scalar(build_call, "run_uid", defaults["run_uid"])
+            gid = scalar(build_call, "run_gid", defaults["run_gid"])
+            workflows[family] = {
+                "name": runtime_name,
+                "uid": int(uid),
+                "gid": int(gid),
+                "home": scalar(
+                    build_call, "runtime_home", defaults["runtime_home"]
+                ),
+                "shell": scalar(
+                    build_call, "runtime_shell", defaults["runtime_shell"]
+                ),
+            }
+            self.assertEqual(
+                scalar(build_call, "run_user", defaults["run_user"]),
+                f"{uid}:{gid}",
+            )
+
+        for spec_path in sorted((root / "images").glob("**/image.yaml")):
+            spec = spec_path.read_text(encoding="utf-8")
+            family = re.search(r"(?m)^name:\s*(\S+)\s*$", spec).group(1)
+            user_block = spec.split("\nuser:\n", 1)[1].split("\npaths:\n", 1)[0]
+            values = {
+                key: value.strip().strip("\"'")
+                for key, value in re.findall(
+                    r"(?m)^  (name|uid|gid|home|shell):\s*(.+?)\s*$",
+                    user_block,
+                )
+            }
+            values["uid"] = int(values["uid"])
+            values["gid"] = int(values["gid"])
+            with self.subTest(spec=spec_path.relative_to(root)):
+                self.assertEqual(values, workflows[family])
+
+        self.assertIn("Runtime image must contain exactly one passwd entry", reusable)
+        self.assertIn("Runtime passwd entry mismatch", reusable)
+        for runtime_input in (
+            "RUNTIME_USER_NAME",
+            "RUNTIME_HOME",
+            "RUNTIME_SHELL",
+        ):
+            self.assertIn(f"{runtime_input}: ${{{{ inputs.", reusable)
+
+    def test_fixture_pulls_are_bounded_before_the_single_compose_build(self):
+        root = pathlib.Path(__file__).resolve().parents[2]
+        runner = (root / "tests" / "functional" / "run.sh").read_text(
+            encoding="utf-8"
+        )
+        pull = 'python3 "$fixture_helper" pull --platform "$platform"'
+        build = '"${compose[@]}" build --pull=false'
+        self.assertIn(pull, runner)
+        self.assertEqual(runner.count(pull), 1)
+        self.assertEqual(runner.count(build), 1)
+        self.assertLess(runner.index(pull), runner.index(build))
+        for fixture_variable in (
+            "fixture_python",
+            "fixture_java",
+            "fixture_nginx",
+            "fixture_dotnet",
+        ):
+            with self.subTest(fixture=fixture_variable):
+                self.assertIn(
+                    f'grep -Fq -- "${fixture_variable}" '
+                    '"$artifact_dir/compose-config.json"',
+                    runner,
+                )
+        self.assertIn(
+            'fail_run "$EXIT_INFRASTRUCTURE" infrastructure_failure fixture-pull',
+            runner,
+        )
+
+    def test_functional_evidence_is_attempt_scoped_and_immutable(self):
+        root = pathlib.Path(__file__).resolve().parents[2]
+        workflow_dir = root / ".github" / "workflows"
+        build = (workflow_dir / "reusable-build-debian-image.yml").read_text(
+            encoding="utf-8"
+        )
+        upload = build.split(
+            "\n      - name: Upload functional contract evidence\n", 1
+        )[1].split("\n      - name: Enforce functional application contract\n", 1)[0]
+        self.assertIn(
+            "name: image-contract-result--${{ inputs.image_name }}--${{ inputs.image_version }}--${{ inputs.debian_arch }}--attempt-${{ github.run_attempt }}",
+            upload,
+        )
+        self.assertNotIn("overwrite:", upload)
+
+        family_aggregate = (
+            workflow_dir / "reusable-aggregate-image-contract.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "pattern: image-contract-result--${{ inputs.image_name }}--*--attempt-${{ github.run_attempt }}",
+            family_aggregate,
+        )
+        central_aggregate = (workflow_dir / "image-contracts.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "pattern: image-contract-result--*--attempt-${{ github.run_attempt }}",
+            central_aggregate,
+        )
 
     def test_runtime_closure_patterns_are_expanded_only_inside_the_rootfs(self):
         root = pathlib.Path(__file__).resolve().parents[2]
@@ -1036,7 +1313,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIn("/tmp", writable_paths)
         self.assertRegex(
             image_spec,
-            r'(?m)^  - path: /tmp\n    owner: 10001:0\n    mode: "1777"$',
+            r'(?m)^  - path: /tmp\n    owner: "10001:0"\n    mode: "1777"$',
         )
 
     def test_workflows_use_node24_action_generations(self):

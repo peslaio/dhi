@@ -28,13 +28,13 @@ user:
 
 paths:
   - path: /var/lib/rabbitmq
-    owner: 10001:0
+    owner: "10001:0"
     mode: "0770"
   - path: /run/rabbitmq
-    owner: 10001:0
+    owner: "10001:0"
     mode: "0770"
   - path: /var/log/rabbitmq
-    owner: 10001:0
+    owner: "10001:0"
     mode: "0770"
 
 environment:

@@ -28,7 +28,7 @@ user:
 
 paths:
   - path: /data
-    owner: 10001:0
+    owner: "10001:0"
     mode: "0770"
 
 entrypoint:

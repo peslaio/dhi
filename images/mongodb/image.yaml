@@ -28,25 +28,25 @@ user:
 
 paths:
   - path: /data/db
-    owner: 10001:0
+    owner: "10001:0"
     mode: "0770"
   - path: /run/mongodb
-    owner: 10001:0
+    owner: "10001:0"
     mode: "0770"
   - path: /var/lib/mongodb
-    owner: 10001:0
+    owner: "10001:0"
     mode: "0770"
   - path: /var/log/mongodb
-    owner: 10001:0
+    owner: "10001:0"
     mode: "0770"
   - path: /etc/mongodb
-    owner: root:0
+    owner: "root:0"
     mode: "0750"
 
 files:
   - source: mongod.conf
     destination: /etc/mongodb/mongodb.conf
-    owner: root:0
+    owner: "root:0"
     mode: "0640"
 
 cmd:

@@ -148,7 +148,7 @@ Impact selection is fail-closed:
 - documentation-only changes select no image legs but still run preflight and the stable gate;
 - scheduled and merge-queue runs select all declared legs.
 
-Each selected build leg runs on its native GitHub runner (`ubuntu-24.04` for amd64 and `ubuntu-24.04-arm` for arm64), uploads uniquely named functional and vulnerability evidence, and then enforces both outcomes. Family and central aggregators require the exact expected `(family, version, platform)` functional result set. Missing, duplicate, unexpected, malformed, or non-passing results fail the gate.
+Each selected build leg runs on its native GitHub runner (`ubuntu-24.04` for amd64 and `ubuntu-24.04-arm` for arm64), uploads uniquely named functional and vulnerability evidence, and then enforces both outcomes. Functional result names include the workflow attempt; family and central aggregators accept only the current attempt's exact expected `(family, version, platform)` result set. Stale-attempt results are ignored and cannot satisfy the gate, so missing current results fail alongside duplicate, unexpected, malformed, or non-passing results. Retry a failed validation with **Re-run all jobs**, because a failed-jobs-only retry intentionally cannot reuse results from an older attempt.
 
 Direct per-image push and manual release wrappers remain available. Their path filters intentionally cover production build inputs, while functional-test-only pull-request coverage is owned by the central unfiltered workflow. Manual publication is accepted only when the selected ref is `main`.
 

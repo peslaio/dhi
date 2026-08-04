@@ -41,6 +41,9 @@ jobs:
       - name: Download family result artifacts
         if: ${{ always() }}
         continue-on-error: true
+        env:
+          # Upstream actions/download-artifact#484; keep other Node warnings visible.
+          NODE_OPTIONS: --disable-warning=DEP0005
         uses: actions/download-artifact@v8
         with:
           pattern: image-contract-result--${{ inputs.image_name }}--*

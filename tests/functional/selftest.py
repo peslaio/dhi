@@ -735,7 +735,7 @@ class WorkflowPolicyTests(unittest.TestCase):
             match.group(1)
             for path in workflow_paths
             for match in re.finditer(
-                r"(?m)^\s*uses:\s*([^\s#]+)",
+                r"(?m)^\s*(?:-\s*)?uses:\s*([^\s#]+)",
                 path.read_text(encoding="utf-8"),
             )
             if not match.group(1).startswith("./")
@@ -773,6 +773,56 @@ class WorkflowPolicyTests(unittest.TestCase):
                     parsed_version,
                     minimum_node24_versions[action_name],
                 )
+
+    def test_download_artifact_suppresses_only_upstream_buffer_warning(self):
+        root = pathlib.Path(__file__).resolve().parents[2]
+        workflow_dir = root / ".github" / "workflows"
+        workflow_paths = sorted(
+            set(workflow_dir.glob("*.yml"))
+            | set(workflow_dir.glob("*.yaml"))
+        )
+        download_steps = []
+        for path in workflow_paths:
+            lines = path.read_text(encoding="utf-8").splitlines()
+            for index, line in enumerate(lines):
+                uses_match = re.match(
+                    r"^(\s*)(-\s*)?uses:\s*actions/download-artifact@",
+                    line,
+                )
+                if uses_match is None:
+                    continue
+                if uses_match.group(2):
+                    step_indent = len(uses_match.group(1))
+                    start = index
+                else:
+                    step_indent = len(uses_match.group(1)) - 2
+                    step_start = re.compile(
+                        rf"^ {{{step_indent}}}-\s+(?:name|uses):"
+                    )
+                    start = next(
+                        candidate
+                        for candidate in range(index, -1, -1)
+                        if step_start.match(lines[candidate])
+                    )
+                next_step = re.compile(rf"^ {{{step_indent}}}-\s+")
+                end = next(
+                    (
+                        candidate
+                        for candidate in range(index + 1, len(lines))
+                        if next_step.match(lines[candidate])
+                    ),
+                    len(lines),
+                )
+                download_steps.append((path, index + 1, "\n".join(lines[start:end])))
+
+        self.assertTrue(download_steps)
+        for path, line_number, step in download_steps:
+            with self.subTest(workflow=path.name, line=line_number):
+                self.assertIn(
+                    "NODE_OPTIONS: --disable-warning=DEP0005",
+                    step,
+                )
+                self.assertIn("actions/download-artifact#484", step)
 
     def test_write_permissions_and_operations_are_confined_to_release_graph(self):
         root = pathlib.Path(__file__).resolve().parents[2]

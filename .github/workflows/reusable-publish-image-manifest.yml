@@ -85,6 +85,9 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Download immutable architecture digests
+        env:
+          # Upstream actions/download-artifact#484; keep other Node warnings visible.
+          NODE_OPTIONS: --disable-warning=DEP0005
         uses: actions/download-artifact@v8
         with:
           pattern: image-release-digest--${{ inputs.image_name }}--${{ inputs.image_version }}--${{ inputs.debian_suite }}--*--attempt-${{ github.run_attempt }}

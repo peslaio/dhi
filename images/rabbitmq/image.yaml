@@ -40,14 +40,14 @@ paths:
 environment:
   HOME: /var/lib/rabbitmq
   RABBITMQ_MNESIA_BASE: /var/lib/rabbitmq/mnesia
+  RABBITMQ_LOGS: "-"
+  RABBITMQ_SASL_LOGS: "-"
 
 cmd:
-  - /usr/sbin/rabbitmq-server
-  - --version
+  - /usr/lib/rabbitmq/bin/rabbitmq-server
 
 ports:
   - 5672
-  - 15672
 
 hardening:
   removeApt: true

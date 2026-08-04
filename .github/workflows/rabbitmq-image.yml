@@ -39,17 +39,23 @@ jobs:
       debian_arch: ${{ matrix.debian_arch }}
       platform: ${{ matrix.platform }}
       packages: ca-certificates,rabbitmq-server
-      cmd: '["/usr/sbin/rabbitmq-server","--version"]'
+      cmd: '["/usr/lib/rabbitmq/bin/rabbitmq-server"]'
       workdir: /var/lib/rabbitmq
-      exposed_ports: "5672 15672"
+      exposed_ports: "5672"
       runtime_user_name: rabbitmq
       runtime_home: /var/lib/rabbitmq
       environment: |
         HOME=/var/lib/rabbitmq
         RABBITMQ_MNESIA_BASE=/var/lib/rabbitmq/mnesia
+        RABBITMQ_LOGS=-
+        RABBITMQ_SASL_LOGS=-
       writable_paths: /var/lib/rabbitmq /run/rabbitmq /var/log/rabbitmq
-      smoke_mode: oneshot
-      smoke_command: /usr/sbin/rabbitmq-server --version
+      runtime_remove_paths: /var/lib/rabbitmq/.erlang.cookie
+      smoke_mode: running
+      smoke_startup_timeout_seconds: "120"
+      smoke_tcp_port: "5672"
+      smoke_command: /usr/sbin/rabbitmq-diagnostics -q ping
+      smoke_expected_output: Ping succeeded
       export_image: ${{ inputs.export_image }}
       generate_sbom: true
       scan: true

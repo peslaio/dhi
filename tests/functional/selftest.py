@@ -567,6 +567,58 @@ class WorkflowPermissionTests(unittest.TestCase):
         "reusable-publish-tested-image.yml",
     }
 
+    def test_runtime_closure_patterns_are_expanded_only_inside_the_rootfs(self):
+        root = pathlib.Path(__file__).resolve().parents[2]
+        workflow_dir = root / ".github" / "workflows"
+        build_workflow = (
+            workflow_dir / "reusable-build-debian-image.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn(
+            "for binary_pattern in $RUNTIME_CLOSURE_BINARIES",
+            build_workflow,
+        )
+        self.assertNotIn(
+            "for closure_path in $RUNTIME_CLOSURE_PATHS",
+            build_workflow,
+        )
+        self.assertIn(
+            'compgen -G "${rootfs}${binary_pattern}"',
+            build_workflow,
+        )
+        self.assertIn(
+            'compgen -G "${rootfs}${closure_path}"',
+            build_workflow,
+        )
+        self.assertIn(
+            'readlink -f "$path"',
+            build_workflow,
+        )
+        self.assertIn("runtime_remove_paths:", build_workflow)
+        self.assertIn(
+            'resolved_remove_target="$(realpath -m "$runtime_remove_target")"',
+            build_workflow,
+        )
+        self.assertIn('"$final_rootfs"/*)', build_workflow)
+        self.assertIn("Runtime removal path does not exist", build_workflow)
+        rabbitmq_workflow = (
+            workflow_dir / "rabbitmq-image.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "runtime_remove_paths: /var/lib/rabbitmq/.erlang.cookie",
+            rabbitmq_workflow,
+        )
+        self.assertIn(
+            'cmd: \'["/usr/lib/rabbitmq/bin/rabbitmq-server"]\'',
+            rabbitmq_workflow,
+        )
+        self.assertIn("smoke_tcp_port: \"5672\"", rabbitmq_workflow)
+        self.assertIn(
+            "smoke_startup_timeout_seconds: \"120\"",
+            rabbitmq_workflow,
+        )
+        self.assertNotIn('exposed_ports: "5672 15672"', rabbitmq_workflow)
+
     def test_write_permissions_and_operations_are_confined_to_release_graph(self):
         root = pathlib.Path(__file__).resolve().parents[2]
         workflow_dir = root / ".github" / "workflows"

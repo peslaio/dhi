@@ -50,6 +50,11 @@ on:
         required: false
         default: ""
         type: string
+      runtime_remove_paths:
+        description: Whitespace-separated absolute paths removed from the final rootfs.
+        required: false
+        default: ""
+        type: string
       forbidden_packages:
         description: Comma-separated package names that must not appear in the final rootfs dpkg status database.
         required: false
@@ -303,6 +308,7 @@ jobs:
           RUNTIME_CLOSURE: ${{ inputs.runtime_closure }}
           RUNTIME_CLOSURE_BINARIES: ${{ inputs.runtime_closure_binaries }}
           RUNTIME_CLOSURE_PATHS: ${{ inputs.runtime_closure_paths }}
+          RUNTIME_REMOVE_PATHS: ${{ inputs.runtime_remove_paths }}
           FORBIDDEN_PACKAGES: ${{ inputs.forbidden_packages }}
           ALLOWED_PACKAGES: ${{ inputs.allowed_packages }}
           EXTRA_APT_KEY_URLS: ${{ inputs.extra_apt_key_urls }}
@@ -423,8 +429,14 @@ jobs:
 
             record_runtime_package() {
               local path="$1"
-              local matches
+              local matches resolved_path
               matches="$(sudo chroot "$rootfs" dpkg-query -S "$path" 2>/dev/null || true)"
+              if [ -z "$matches" ]; then
+                resolved_path="$(sudo chroot "$rootfs" readlink -f "$path" 2>/dev/null || true)"
+                if [ -n "$resolved_path" ] && [ "$resolved_path" != "$path" ]; then
+                  matches="$(sudo chroot "$rootfs" dpkg-query -S "$resolved_path" 2>/dev/null || true)"
+                fi
+              fi
               if [ -n "$matches" ]; then
                 printf '%s\n' "$matches" \
                   | sed 's/: .*//' \
@@ -507,7 +519,7 @@ jobs:
             }
 
             shopt -s nullglob dotglob
-            for binary_pattern in $RUNTIME_CLOSURE_BINARIES; do
+            while IFS= read -r binary_pattern; do
               mapfile -t binary_matches < <(compgen -G "${rootfs}${binary_pattern}" || true)
               if [ "${#binary_matches[@]}" -eq 0 ]; then
                 echo "Runtime closure binary pattern did not match any files: $binary_pattern" >&2
@@ -518,9 +530,13 @@ jobs:
                 copy_runtime_path "$binary"
                 copy_elf_dependencies "$binary"
               done
-            done
+            done < <(
+              printf '%s\n' "$RUNTIME_CLOSURE_BINARIES" \
+                | tr '[:space:]' '\n' \
+                | sed '/^$/d'
+            )
 
-            for closure_path in $RUNTIME_CLOSURE_PATHS; do
+            while IFS= read -r closure_path; do
               mapfile -t closure_matches < <(compgen -G "${rootfs}${closure_path}" || true)
               if [ "${#closure_matches[@]}" -eq 0 ]; then
                 echo "Runtime closure path pattern did not match any files: $closure_path" >&2
@@ -530,7 +546,11 @@ jobs:
                 rel="/${expanded#"$rootfs"/}"
                 copy_runtime_path "$rel"
               done
-            done
+            done < <(
+              printf '%s\n' "$RUNTIME_CLOSURE_PATHS" \
+                | tr '[:space:]' '\n' \
+                | sed '/^$/d'
+            )
 
             for common_path in \
               /etc/passwd \
@@ -590,6 +610,44 @@ jobs:
             echo "Runtime closure package count: $(wc -l < "$runtime_packages.sorted")"
             final_rootfs="$runtime_rootfs"
           fi
+
+          while IFS= read -r runtime_remove_path; do
+            [ -n "$runtime_remove_path" ] || continue
+            case "$runtime_remove_path" in
+              /*) ;;
+              *)
+                echo "runtime_remove_paths entries must be absolute: $runtime_remove_path" >&2
+                exit 1
+                ;;
+            esac
+            runtime_remove_path="$(realpath -sm "$runtime_remove_path")"
+            if [ "$runtime_remove_path" = "/" ]; then
+              echo "Refusing to remove the runtime rootfs." >&2
+              exit 1
+            fi
+            if [ -z "$final_rootfs" ] || [ ! -d "$final_rootfs" ]; then
+              echo "Final runtime rootfs is unavailable: $final_rootfs" >&2
+              exit 1
+            fi
+            runtime_remove_target="$final_rootfs$runtime_remove_path"
+            resolved_remove_target="$(realpath -m "$runtime_remove_target")"
+            case "$resolved_remove_target" in
+              "$final_rootfs"/*) ;;
+              *)
+                echo "Refusing to remove outside the runtime rootfs: $resolved_remove_target" >&2
+                exit 1
+                ;;
+            esac
+            if [ ! -e "$runtime_remove_target" ] && [ ! -L "$runtime_remove_target" ]; then
+              echo "Runtime removal path does not exist: $runtime_remove_path" >&2
+              exit 1
+            fi
+            sudo rm -rf -- "$runtime_remove_target"
+          done < <(
+            printf '%s\n' "$RUNTIME_REMOVE_PATHS" \
+              | tr '[:space:]' '\n' \
+              | sed '/^$/d'
+          )
 
           sudo rm -rf \
             "$final_rootfs/var/lib/apt/lists/"* \

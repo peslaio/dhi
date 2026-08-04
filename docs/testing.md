@@ -67,6 +67,12 @@ L0 through L2 run against the local image before an architecture artifact is pus
 | `mongodb` | Start `mongod`, insert a document with `mongosh`, and read and validate it. |
 | `rabbitmq` | Enable the management plugin, declare a queue, publish a message, and consume it through the HTTP API. |
 
+The RabbitMQ runtime does not bake an Erlang cookie into the image and exposes
+only the AMQP port by default. Clustered deployments must provide their cookie
+as a secret with owner-only permissions. The functional fixture enables the
+management plugin only for its HTTP queue roundtrip; it is not enabled in the
+base runtime image.
+
 The common verifier image uses only the Python standard library for HTTP and wire-protocol probes. Service-native clients remain in the database suites where they provide clearer semantic coverage.
 
 ## Runner Contract

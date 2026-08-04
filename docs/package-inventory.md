@@ -7,7 +7,7 @@ There are two states:
 - `closure`: the image uses `runtime_closure`; the listed packages are the current shipped runtime package records.
 - `full-rootfs`: the image is not minimized yet; the listed packages are the required top-level package roots, and the package count shows how many dpkg package records are currently still present.
 
-Package counts were sampled from the published `linux/amd64` images in GHCR. On `linux/arm64`, `apache`, `haproxy`, and `nginx` currently omit `libssl3`, so their CI allowlists are architecture-specific.
+Package counts were sampled from the published `linux/amd64` images in GHCR. The current closure keeps OpenSSL providers and `libssl3` on both supported architectures for `apache`, `haproxy`, and `nginx`.
 
 ## Runtime-Closure Images
 
@@ -20,7 +20,7 @@ These images already have a small package database. Keep these package sets tigh
 | `haproxy` | `2.6-bookworm` | 9 | `ca-certificates`, `haproxy`, `libc6`, `libcap2`, `libcrypt1`, `libgcc-s1`, `libgpg-error0`, `liblzma5`, `libssl3` |
 | `memcached` | `1.6-bookworm` | 2 | `libc6`, `memcached` |
 | `nginx` | `1.22-bookworm` | 7 | `ca-certificates`, `libc6`, `libcrypt1`, `libssl3`, `nginx`, `nginx-common`, `zlib1g` |
-| `php-fpm` | `8.2-bookworm` | 16 | `ca-certificates`, `libbsd0`, `libc6`, `libcap2`, `libedit2`, `libffi8`, `libgcc-s1`, `libgpg-error0`, `liblzma5`, `libmd0`, `libssl3`, `libtinfo6`, `php8.2-common`, `php8.2-fpm`, `tzdata`, `zlib1g` |
+| `php-fpm` | `8.2-bookworm` | 18 | `ca-certificates`, `libbsd0`, `libc6`, `libcap2`, `libedit2`, `libffi8`, `libgcc-s1`, `libgpg-error0`, `liblzma5`, `libmd0`, `libssl3`, `libtinfo6`, `php8.2-common`, `php8.2-fpm`, `php8.2-opcache`, `php8.2-readline`, `tzdata`, `zlib1g` |
 | `redis` | `7.0-bookworm` | 7 | `libc6`, `libcap2`, `libgcc-s1`, `libgpg-error0`, `liblzma5`, `redis-server`, `redis-tools` |
 
 ## Full-Rootfs Images

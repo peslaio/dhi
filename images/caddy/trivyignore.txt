@@ -3,3 +3,11 @@
 # upstream packages are rebuilt with Go 1.26.4 or newer.
 CVE-2026-42504
 CVE-2026-27145
+
+# Upstream Caddy 2.11.4 remains the latest stable package and has not yet
+# incorporated the fixed dependency and Go releases reported by Trivy.
+# Remove these entries when Caddy ships x/text 0.39.0, gRPC 1.82.1, and a Go
+# release containing the CVE-2026-39822 fix. Review no later than 2026-09-01.
+CVE-2026-56852
+GHSA-hrxh-6v49-42gf
+CVE-2026-39822

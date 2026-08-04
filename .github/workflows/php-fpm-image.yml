@@ -49,10 +49,10 @@ jobs:
         /etc/ssl/certs
         /usr/lib/php
         /usr/share/php8.2-common
-        /usr/share/php8.2-fpm
+        /usr/share/php/8.2/fpm
         /usr/share/zoneinfo
       forbidden_packages: apt,libapt-pkg6.0,debian-archive-keyring,gpgv,bash,dash,dpkg
-      allowed_packages: ca-certificates,libbsd0,libc6,libcap2,libedit2,libffi8,libgcc-s1,libgpg-error0,liblzma5,libmd0,libssl3,libtinfo6,php8.2-common,php8.2-fpm,tzdata,zlib1g
+      allowed_packages: ca-certificates,libbsd0,libc6,libcap2,libedit2,libffi8,libgcc-s1,libgpg-error0,liblzma5,libmd0,libssl3,libtinfo6,php8.2-common,php8.2-fpm,php8.2-opcache,php8.2-readline,tzdata,zlib1g
       config_path: images/php-fpm/php-fpm.conf
       entrypoint: '["/usr/sbin/php-fpm8.2"]'
       cmd: '["-F","-O","-y","/etc/php-fpm/php-fpm.conf"]'

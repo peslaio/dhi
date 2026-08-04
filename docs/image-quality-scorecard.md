@@ -64,7 +64,7 @@ The clearest gain is in the closure cohort. The last amd64 package snapshot reco
 | `haproxy` | 9 | 92 | 90% |
 | `memcached` | 2 | 93 | 98% |
 | `nginx` | 7 | 142 | 95% |
-| `php-fpm` | 16 expected after repair | 173 | 91% |
+| `php-fpm` | 18 expected after repair | 173 | 90% |
 | `redis` | 7 | 89 | 92% |
 
 These percentages show package-database reduction, not vulnerability reduction and not an exact count of exploitable paths. They are still meaningful because shells, package managers, and unrelated administration programs are absent from closure root filesystems and the main application behavior is exercised afterward.

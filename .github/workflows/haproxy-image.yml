@@ -46,7 +46,7 @@ jobs:
         /etc/ssl/certs
         /usr/lib/*/ossl-modules
       forbidden_packages: apt,libapt-pkg6.0,debian-archive-keyring,gpgv,bash,dash,dpkg
-      allowed_packages: ${{ matrix.debian_arch == 'amd64' && 'ca-certificates,haproxy,libc6,libcap2,libcrypt1,libgcc-s1,libgpg-error0,liblzma5,libssl3' || 'ca-certificates,haproxy,libc6,libcap2,libcrypt1,libgcc-s1,libgpg-error0,liblzma5' }}
+      allowed_packages: ca-certificates,haproxy,libc6,libcap2,libcrypt1,libgcc-s1,libgpg-error0,liblzma5,libssl3
       config_path: images/haproxy/haproxy.conf
       entrypoint: '["/usr/sbin/haproxy"]'
       cmd: '["-f","/etc/haproxy/haproxy.conf","-db"]'

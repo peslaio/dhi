@@ -263,6 +263,36 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Validate build policy inputs
+        env:
+          ALLOWED_PACKAGES: ${{ inputs.allowed_packages }}
+          EXPORT_IMAGE: ${{ inputs.export_image }}
+          FAIL_ON_VULNERABILITIES: ${{ inputs.fail_on_vulnerabilities }}
+          FUNCTIONAL_TEST: ${{ inputs.functional_test }}
+          GENERATE_SBOM: ${{ inputs.generate_sbom }}
+          RUNTIME_CLOSURE: ${{ inputs.runtime_closure }}
+          SCAN: ${{ inputs.scan }}
+        run: |
+          set -euo pipefail
+
+          normalized_allowed_packages="$(printf '%s' "$ALLOWED_PACKAGES" | tr -d '[:space:],')"
+          if [ "$RUNTIME_CLOSURE" = "true" ] && [ -z "$normalized_allowed_packages" ]; then
+            echo "runtime_closure=true requires a non-empty allowed_packages inventory." >&2
+            exit 1
+          fi
+
+          if [ "$EXPORT_IMAGE" = "true" ]; then
+            missing_release_gates=()
+            [ "$FUNCTIONAL_TEST" = "true" ] || missing_release_gates+=(functional_test)
+            [ "$GENERATE_SBOM" = "true" ] || missing_release_gates+=(generate_sbom)
+            [ "$SCAN" = "true" ] || missing_release_gates+=(scan)
+            [ "$FAIL_ON_VULNERABILITIES" = "true" ] || missing_release_gates+=(fail_on_vulnerabilities)
+            if [ "${#missing_release_gates[@]}" -ne 0 ]; then
+              echo "export_image=true requires every release gate; disabled: ${missing_release_gates[*]}" >&2
+              exit 1
+            fi
+          fi
+
       - name: Install rootfs build dependencies
         run: |
           set -euo pipefail
@@ -609,16 +639,6 @@ jobs:
             ' "$rootfs/var/lib/dpkg/status" | sudo tee "$runtime_rootfs/var/lib/dpkg/status" >/dev/null
             sudo touch "$runtime_rootfs/var/lib/dpkg/available"
 
-            if [ ! -r "$runtime_rootfs/etc/os-release" ] \
-              || ! grep -Eq '^ID=(debian|"debian")$' "$runtime_rootfs/etc/os-release"; then
-              echo "Runtime closure is missing a readable Debian OS identity." >&2
-              exit 1
-            fi
-            if [ ! -s "$runtime_rootfs/var/lib/dpkg/status" ]; then
-              echo "Runtime closure package database is empty." >&2
-              exit 1
-            fi
-
             echo "Runtime closure package count: $(wc -l < "$runtime_packages.sorted")"
             final_rootfs="$runtime_rootfs"
           fi
@@ -660,6 +680,18 @@ jobs:
               | tr '[:space:]' '\n' \
               | sed '/^$/d'
           )
+
+          if [ "$RUNTIME_CLOSURE" = "true" ]; then
+            if [ ! -r "$final_rootfs/etc/os-release" ] \
+              || ! grep -Eq '^ID=(debian|"debian")$' "$final_rootfs/etc/os-release"; then
+              echo "Runtime closure is missing a readable Debian OS identity." >&2
+              exit 1
+            fi
+            if [ ! -s "$final_rootfs/var/lib/dpkg/status" ]; then
+              echo "Runtime closure package database is empty." >&2
+              exit 1
+            fi
+          fi
 
           sudo rm -rf \
             "$final_rootfs/var/lib/apt/lists/"* \
@@ -1088,7 +1120,7 @@ jobs:
           tests/functional/run.sh "$IMAGE_NAME" "$PRIMARY_TAG" "$IMAGE_VERSION" "$PLATFORM"
 
       - name: Upload functional contract evidence
-        if: ${{ always() && inputs.functional_test }}
+        if: ${{ always() && inputs.functional_test && (steps.functional.outcome == 'success' || hashFiles('artifacts/functional/**') != '') }}
         uses: actions/upload-artifact@v7
         with:
           name: image-contract-result--${{ inputs.image_name }}--${{ inputs.image_version }}--${{ inputs.debian_arch }}
@@ -1156,7 +1188,7 @@ jobs:
             --expected-packages "$ALLOWED_PACKAGES"
 
       - name: Upload vulnerability scan evidence
-        if: ${{ always() && inputs.scan }}
+        if: ${{ always() && inputs.scan && (steps.vulnerability-coverage.outcome == 'success' || hashFiles('artifacts/security/trivy-report.json') != '') }}
         uses: actions/upload-artifact@v7
         with:
           name: trivy-${{ inputs.image_name }}-${{ inputs.image_version }}-${{ inputs.debian_suite }}-${{ inputs.debian_arch }}-attempt-${{ github.run_attempt }}

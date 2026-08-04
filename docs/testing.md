@@ -39,7 +39,7 @@ The online check confirms that each pinned index still exposes every declared fi
 
 | Layer | Gate | Purpose |
 | --- | --- | --- |
-| L0 | Rootfs and image assertions | Validate package policy, Debian OS identity, numeric user identity, forbidden tools, required files, privilege bits, capabilities, and shell removal. |
+| L0 | Rootfs and image assertions | Validate package policy, runtime-closure Debian OS identity, numeric user identity, forbidden tools, required files, privilege bits, capabilities, and shell removal. |
 | L1 | Process smoke | Validate startup, config parsing, port readiness, or a direct command. |
 | L2 | Compose application contract | Build or configure a representative consumer and verify useful protocol behavior. |
 | L3 | Published artifact | Verify digest signature, SBOM/provenance attachment, manifest platforms, and registry pull. Some controls remain planned. |

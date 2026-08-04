@@ -4,6 +4,7 @@
 import argparse
 import json
 import pathlib
+import re
 import sys
 
 
@@ -17,11 +18,7 @@ def require(condition, message):
 
 
 def parse_expected_packages(value):
-    if not value.strip():
-        return set()
-    packages = {item.strip() for item in value.split(",")}
-    require("" not in packages, "expected package names must not be empty")
-    return packages
+    return {item for item in re.split(r"[\s,]+", value.strip()) if item}
 
 
 def validate_report(
@@ -89,8 +86,15 @@ def validate_report(
             require(isinstance(package, dict), "Trivy package entry must be an object")
             package_name = package.get("Name")
             require(
-                isinstance(package_name, str) and package_name,
-                "Trivy package entry is missing Name",
+                isinstance(package_name, str)
+                and package_name.strip()
+                and package_name == package_name.strip(),
+                "Trivy package entry has an invalid Name",
+            )
+            package_version = package.get("Version")
+            require(
+                isinstance(package_version, str) and package_version.strip(),
+                "Trivy package entry is missing Version",
             )
             package_names.add(package_name)
 

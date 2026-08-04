@@ -21,6 +21,25 @@ import scan_result
 IMAGE_ID = "sha256:" + ("a" * 64)
 
 
+def discover_runtime_closure_workflows(workflow_dir):
+    discovered = {}
+    workflow_paths = sorted(
+        set(workflow_dir.glob("*.yml")) | set(workflow_dir.glob("*.yaml"))
+    )
+    for path in workflow_paths:
+        workflow = path.read_text(encoding="utf-8")
+        for line in workflow.splitlines():
+            match = re.match(r"^\s*runtime_closure:\s*(.*?)\s*$", line)
+            if not match or not match.group(1):
+                continue
+            if match.group(1) != "true":
+                raise AssertionError(
+                    f"{path.name}: runtime_closure must be the literal true"
+                )
+            discovered[path.name] = workflow
+    return discovered
+
+
 def passing_result():
     return {
         "schemaVersion": 1,
@@ -382,6 +401,10 @@ class ScanResultTests(unittest.TestCase):
         mutations = {
             "old schema": lambda value: value.__setitem__("SchemaVersion", 1),
             "future schema": lambda value: value.__setitem__("SchemaVersion", 3),
+            "wrong artifact type": lambda value: value.__setitem__(
+                "ArtifactType", "filesystem"
+            ),
+            "missing metadata": lambda value: value.pop("Metadata"),
             "missing OS metadata": lambda value: value["Metadata"].pop("OS"),
             "unsupported OS": lambda value: value["Metadata"]["OS"].__setitem__(
                 "Family", "none"
@@ -390,9 +413,27 @@ class ScanResultTests(unittest.TestCase):
                 "Name", ""
             ),
             "no OS result": lambda value: value.__setitem__("Results", []),
+            "language result only": lambda value: value["Results"][0].__setitem__(
+                "Class", "lang-pkgs"
+            ),
+            "wrong OS result type": lambda value: value["Results"][0].__setitem__(
+                "Type", "ubuntu"
+            ),
             "no packages": lambda value: value["Results"][0].__setitem__(
                 "Packages", []
             ),
+            "package without name": lambda value: value["Results"][0][
+                "Packages"
+            ][0].pop("Name"),
+            "package with whitespace name": lambda value: value["Results"][0][
+                "Packages"
+            ][0].__setitem__("Name", "   "),
+            "package without version": lambda value: value["Results"][0][
+                "Packages"
+            ][0].pop("Version"),
+            "package with whitespace version": lambda value: value["Results"][0][
+                "Packages"
+            ][0].__setitem__("Version", "   "),
             "wrong artifact": lambda value: value.__setitem__(
                 "ArtifactName", "local/other:test"
             ),
@@ -411,6 +452,14 @@ class ScanResultTests(unittest.TestCase):
                         "local/redis:test",
                         IMAGE_ID,
                     )
+
+    def test_expected_package_separators_are_normalized(self):
+        self.assertEqual(
+            scan_result.parse_expected_packages(
+                "base-files,,redis-server\n redis-tools"
+            ),
+            {"base-files", "redis-server", "redis-tools"},
+        )
 
     def test_runtime_package_inventory_must_match(self):
         with self.assertRaisesRegex(
@@ -790,11 +839,26 @@ class WorkflowPolicyTests(unittest.TestCase):
             build_workflow,
         )
         self.assertIn("Runtime closure package database is empty", build_workflow)
+        for post_removal_check in (
+            "Runtime closure is missing a readable Debian OS identity",
+            "Runtime closure package database is empty",
+        ):
+            with self.subTest(post_removal_check=post_removal_check):
+                self.assertGreater(
+                    build_workflow.index(post_removal_check),
+                    build_workflow.index('sudo rm -rf -- "$runtime_remove_target"'),
+                )
         self.assertIn("format: json", build_workflow)
         self.assertIn("output: artifacts/security/trivy-report.json", build_workflow)
         self.assertIn("list-all-pkgs: true", build_workflow)
         self.assertIn("tests/functional/scan_result.py", build_workflow)
 
+        input_policy_step = build_workflow.split(
+            "\n      - name: Validate build policy inputs\n", 1
+        )[1].split("\n      - name: Install rootfs build dependencies\n", 1)[0]
+        functional_upload_step = build_workflow.split(
+            "\n      - name: Upload functional contract evidence\n", 1
+        )[1].split("\n      - name: Enforce functional application contract\n", 1)[0]
         scan_step = build_workflow.split(
             "\n      - name: Scan image\n", 1
         )[1].split("\n      - name: Validate vulnerability scan coverage\n", 1)[0]
@@ -811,6 +875,30 @@ class WorkflowPolicyTests(unittest.TestCase):
             "\n      - name: Export fully tested image for release\n", 1
         )[1].split("\n      - name:", 1)[0]
 
+        self.assertIn(
+            "runtime_closure=true requires a non-empty allowed_packages inventory",
+            input_policy_step,
+        )
+        self.assertIn('if [ "$EXPORT_IMAGE" = "true" ]', input_policy_step)
+        for required_gate in (
+            "functional_test",
+            "generate_sbom",
+            "scan",
+            "fail_on_vulnerabilities",
+        ):
+            with self.subTest(release_gate=required_gate):
+                self.assertIn(
+                    f"missing_release_gates+=({required_gate})",
+                    input_policy_step,
+                )
+        self.assertIn(
+            "if: ${{ always() && inputs.functional_test && "
+            "(steps.functional.outcome == 'success' || "
+            "hashFiles('artifacts/functional/**') != '') }}",
+            functional_upload_step,
+        )
+        self.assertIn("if-no-files-found: error", functional_upload_step)
+
         self.assertIn("id: vulnerability-scan", scan_step)
         self.assertIn("if: inputs.scan", scan_step)
         self.assertIn("continue-on-error: true", scan_step)
@@ -819,7 +907,12 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIn("continue-on-error: true", coverage_step)
         self.assertIn('--expected-artifact-name "$PRIMARY_TAG"', coverage_step)
         self.assertIn('--expected-image-id "$TESTED_IMAGE_ID"', coverage_step)
-        self.assertIn("if: ${{ always() && inputs.scan }}", upload_step)
+        self.assertIn(
+            "if: ${{ always() && inputs.scan && "
+            "(steps.vulnerability-coverage.outcome == 'success' || "
+            "hashFiles('artifacts/security/trivy-report.json') != '') }}",
+            upload_step,
+        )
         self.assertIn("if-no-files-found: error", upload_step)
         self.assertIn("if: ${{ always() && inputs.scan }}", enforcement_step)
         self.assertIn(
@@ -836,18 +929,10 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertNotIn("always()", export_step)
         self.assertNotIn("continue-on-error", export_step)
 
-        closure_workflows = {
-            "apache-image.yml",
-            "caddy-image.yml",
-            "haproxy-image.yml",
-            "memcached-image.yml",
-            "nginx-image.yml",
-            "php-fpm-image.yml",
-            "redis-image.yml",
-        }
-        for workflow_name in closure_workflows:
+        closure_workflows = discover_runtime_closure_workflows(workflow_dir)
+        self.assertTrue(closure_workflows)
+        for workflow_name, workflow in closure_workflows.items():
             with self.subTest(workflow=workflow_name):
-                workflow = (workflow_dir / workflow_name).read_text(encoding="utf-8")
                 allowed_packages = next(
                     line.partition(":")[2].strip().split(",")
                     for line in workflow.splitlines()
@@ -859,17 +944,48 @@ class WorkflowPolicyTests(unittest.TestCase):
         root = pathlib.Path(__file__).resolve().parents[2]
         workflow_dir = root / ".github" / "workflows"
         inventory_lines = (
-            root / "docs" / "package-inventory.md"
-        ).read_text(encoding="utf-8").splitlines()
-        closure_workflows = {
-            "apache": "apache-image.yml",
-            "caddy": "caddy-image.yml",
-            "haproxy": "haproxy-image.yml",
-            "memcached": "memcached-image.yml",
-            "nginx": "nginx-image.yml",
-            "php-fpm": "php-fpm-image.yml",
-            "redis": "redis-image.yml",
+            (root / "docs" / "package-inventory.md")
+            .read_text(encoding="utf-8")
+            .split("## Runtime-Closure Images", 1)[1]
+            .split("## Full-Rootfs Images", 1)[0]
+            .splitlines()
+        )
+        scorecard_measurement_lines = (
+            (root / "docs" / "image-quality-scorecard.md")
+            .read_text(encoding="utf-8")
+            .split("## Measurable Gains Over Regular Images", 1)[1]
+            .split("## Strengths That Matter", 1)[0]
+            .splitlines()
+        )
+        closure_workflows = {}
+        for workflow_name, workflow in discover_runtime_closure_workflows(
+            workflow_dir
+        ).items():
+            image_name = next(
+                line.partition(":")[2].strip()
+                for line in workflow.splitlines()
+                if line.strip().startswith("image_name:")
+            )
+            closure_workflows[image_name] = workflow_name
+
+        inventory_rows = {
+            columns[0].replace("`", ""): columns
+            for line in inventory_lines
+            if line.startswith("| `")
+            for columns in [
+                [column.strip() for column in line.strip("|").split("|")]
+            ]
         }
+        scorecard_rows = {
+            columns[0].replace("`", ""): columns
+            for line in scorecard_measurement_lines
+            if line.startswith("| `")
+            for columns in [
+                [column.strip() for column in line.strip("|").split("|")]
+            ]
+        }
+        self.assertEqual(set(inventory_rows), set(closure_workflows))
+        self.assertEqual(set(scorecard_rows), set(closure_workflows))
 
         for image_name, workflow_name in closure_workflows.items():
             with self.subTest(image=image_name):
@@ -883,20 +999,21 @@ class WorkflowPolicyTests(unittest.TestCase):
                 )
                 workflow_packages = allowed_line.partition(":")[2].strip().split(",")
 
-                inventory_line = next(
-                    line
-                    for line in inventory_lines
-                    if line.startswith(f"| `{image_name}` |")
-                )
-                columns = [
-                    column.strip()
-                    for column in inventory_line.strip("|").split("|")
-                ]
+                columns = inventory_rows[image_name]
                 inventory_count = int(columns[2])
                 inventory_packages = columns[3].replace("`", "").split(", ")
+                scorecard_columns = scorecard_rows[image_name]
+                scorecard_count = int(scorecard_columns[1])
+                upstream_count = int(scorecard_columns[2])
+                scorecard_reduction = int(scorecard_columns[3].removesuffix("%"))
+                expected_reduction = round(
+                    (upstream_count - scorecard_count) * 100 / upstream_count
+                )
 
                 self.assertEqual(inventory_count, len(workflow_packages))
                 self.assertEqual(inventory_packages, workflow_packages)
+                self.assertEqual(scorecard_count, inventory_count)
+                self.assertEqual(scorecard_reduction, expected_reduction)
 
     def test_php_fpm_declares_opcache_lock_tmpfs(self):
         root = pathlib.Path(__file__).resolve().parents[2]

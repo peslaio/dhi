@@ -88,7 +88,7 @@ This profile is a hardened Debian image construction method, not a distroless-eq
 3. `mmdebstrap` verifies Debian repository metadata with the Debian archive keyring and installs the requested packages.
 4. The builder creates either a closure rootfs or a cleaned full rootfs and writes a single runtime identity to `/etc/passwd`.
 5. The image is built from `scratch` with exact `USER uid:gid` metadata.
-6. Static checks reject UID 0, identity mismatch, missing Debian OS/package identity, forbidden package records, unexpected allowlist changes, APT executables, setuid/setgid files, file capabilities, and common shell executables when shell removal is enabled.
+6. Static checks reject UID 0, identity mismatch, missing runtime-closure Debian OS/package identity, forbidden package records, configured allowlist drift, APT executables, setuid/setgid files, file capabilities, and common shell executables when shell removal is enabled.
 7. A smoke test validates process startup, command output, TCP, or HTTP behavior.
 8. A Compose application contract builds or configures a representative consumer and exercises an application-level operation. The common runner proves the local source-image identity, applies a wall-clock deadline, captures evidence before teardown, and emits a canonical result.
 9. Syft emits an SPDX JSON SBOM. Trivy emits a full JSON package report and gates fixable HIGH and CRITICAL vulnerabilities. A separate validator binds that report to the tested image tag and image ID, requires Debian OS metadata and a non-empty `os-pkgs` result, and requires runtime-closure packages to equal the declared allowlist. Scan failure, missing evidence, or missing coverage blocks export.

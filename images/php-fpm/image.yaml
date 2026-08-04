@@ -27,6 +27,9 @@ user:
   shell: /usr/sbin/nologin
 
 paths:
+  - path: /tmp
+    owner: 10001:0
+    mode: "1777"
   - path: /run/php-fpm
     owner: 10001:0
     mode: "0770"

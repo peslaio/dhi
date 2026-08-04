@@ -699,6 +699,25 @@ class WorkflowPermissionTests(unittest.TestCase):
                 self.assertEqual(inventory_count, len(workflow_packages))
                 self.assertEqual(inventory_packages, workflow_packages)
 
+    def test_php_fpm_declares_opcache_lock_tmpfs(self):
+        root = pathlib.Path(__file__).resolve().parents[2]
+        compose = (
+            root / "tests" / "functional" / "php-fpm" / "compose.yaml"
+        ).read_text(encoding="utf-8")
+        workflow = (
+            root / ".github" / "workflows" / "php-fpm-image.yml"
+        ).read_text(encoding="utf-8")
+        image_spec = (
+            root / "images" / "php-fpm" / "image.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("/tmp:uid=10001,gid=0,mode=1777", compose)
+        self.assertIn(
+            "writable_paths: /tmp /run/php-fpm",
+            workflow,
+        )
+        self.assertIn('path: /tmp\n    owner: 10001:0\n    mode: "1777"', image_spec)
+
     def test_write_permissions_and_operations_are_confined_to_release_graph(self):
         root = pathlib.Path(__file__).resolve().parents[2]
         workflow_dir = root / ".github" / "workflows"

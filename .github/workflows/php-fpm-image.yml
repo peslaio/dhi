@@ -60,7 +60,7 @@ jobs:
       exposed_ports: "9000"
       runtime_user_name: php
       runtime_home: /var/www/html
-      writable_paths: /run/php-fpm /var/log/php8.2-fpm /var/www/html
+      writable_paths: /tmp /run/php-fpm /var/log/php8.2-fpm /var/www/html
       smoke_mode: running
       smoke_tcp_port: "9000"
       smoke_command: /usr/sbin/php-fpm8.2 -tt -y /etc/php-fpm/php-fpm.conf

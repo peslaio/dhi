@@ -13,6 +13,7 @@ services:
       io.pesla.dhi.functional.identity-mode: derived-rootfs-prefix
     read_only: true
     tmpfs:
+      - /tmp:uid=10001,gid=0,mode=1777
       - /run/php-fpm:uid=10001,gid=0,mode=0770
       - /var/log/php8.2-fpm:uid=10001,gid=0,mode=0770
     cap_drop: [ALL]

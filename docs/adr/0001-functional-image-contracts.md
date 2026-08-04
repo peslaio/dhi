@@ -63,7 +63,7 @@ Pull requests and merge-queue candidates use one workflow without path filters. 
 
 Shared runner, schema, harness, or reusable-build changes select every declared leg. Documentation-only changes select none. Scheduled runs exercise all legs. The gate compares the exact expected and observed leg sets; missing, duplicate, unexpected, malformed, or non-passing results fail the gate.
 
-Publishing remains in the family workflows and is explicitly disabled for centrally orchestrated validation.
+Publishing is explicitly disabled for centrally orchestrated validation. ADR 0002 subsequently moved publication out of family workflows and into a release-only tested-artifact publisher.
 
 ## Consequences
 
@@ -73,11 +73,11 @@ Publishing remains in the family workflows and is explicitly disabled for centra
 - Image metadata no longer drifts from a second committed workflow matrix.
 - Derived fixtures remain necessary for compiled applications and some configuration-heavy services; their weaker identity mode is visible in evidence.
 - The system adds CI orchestration and artifact storage, and native Arm runner availability becomes a fail-closed dependency.
-- The current combined build-and-publish reusable graph still requires package-write and OIDC token permissions at its outer pull-request caller even though publishing is disabled. Separating read-only contract builds from release publication is required before this becomes a strict least-privilege boundary.
+- Read-only contract builds and release publication are now structurally separate as specified by ADR 0002.
 
 ## Deferred work
 
-This decision does not yet provide a read-only pull-request build graph, published-digest verification, OCI-attached SBOM/provenance validation, stateful upgrade and restore testing, Kubernetes lifecycle tests, or production promotion policy. Those are later gates and must not be inferred from a passing image-level contract.
+This decision does not provide post-publication digest pulls, OCI-attached SBOM/provenance validation, stateful upgrade and restore testing, Kubernetes lifecycle tests, or production promotion policy. Those are later gates and must not be inferred from a passing image-level contract. The read-only pull-request build graph was added by ADR 0002.
 
 ## Alternatives considered
 

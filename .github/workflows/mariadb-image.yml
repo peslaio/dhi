@@ -1,33 +1,16 @@
 name: Build MariaDB image
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - .github/workflows/reusable-build-debian-image.yml
-      - .github/workflows/reusable-prepare-image-matrix.yml
-      - .github/workflows/reusable-publish-image-manifest.yml
-      - .github/workflows/mariadb-image.yml
-      - images/mariadb/**
   workflow_call:
     inputs:
       orchestrated:
         required: false
         default: false
         type: boolean
-      push:
+      export_image:
         required: false
         default: false
         type: boolean
-  workflow_dispatch:
-    inputs:
-      push:
-        description: Push to the configured registry after build, smoke test, SBOM, and scan.
-        required: false
-        default: false
-        type: boolean
-
 concurrency:
   group: mariadb-image-${{ inputs.orchestrated && format('contracts-{0}', github.run_id) || format('publish-{0}', github.ref) }}
   cancel-in-progress: true
@@ -42,14 +25,12 @@ jobs:
 
   mariadb:
     needs: prepare
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.prepare.outputs.build_matrix) }}
     permissions:
       actions: read
       contents: read
-      id-token: write
-      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.build_matrix) }}
     uses: ./.github/workflows/reusable-build-debian-image.yml
     with:
       image_name: mariadb
@@ -67,13 +48,10 @@ jobs:
       smoke_mode: oneshot
       smoke_command: /usr/sbin/mariadbd --version
       smoke_expected_output: mariadbd
-      push_primary_tag: false
-      push: ${{ !inputs.orchestrated && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.push)) }}
+      export_image: ${{ inputs.export_image }}
       generate_sbom: true
       scan: true
       fail_on_vulnerabilities: true
-      sign: true
-    secrets: inherit
 
   contract-aggregate:
     needs: [prepare, mariadb]
@@ -86,22 +64,3 @@ jobs:
       image_name: mariadb
       prepare_result: ${{ needs.prepare.result }}
       build_result: ${{ needs.mariadb.result }}
-
-  mariadb-manifest:
-    needs: [prepare, contract-aggregate]
-    if: ${{ !inputs.orchestrated && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.push)) }}
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.prepare.outputs.manifest_matrix) }}
-    permissions:
-      contents: read
-      id-token: write
-      packages: write
-    uses: ./.github/workflows/reusable-publish-image-manifest.yml
-    with:
-      image_name: mariadb
-      image_version: ${{ matrix.version }}
-      debian_suite: ${{ matrix.debian_suite }}
-      debian_arches: ${{ matrix.debian_arches }}
-      sign: true
-    secrets: inherit

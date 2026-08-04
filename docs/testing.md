@@ -143,13 +143,20 @@ Impact selection is fail-closed:
 
 Each selected build leg runs on its native GitHub runner (`ubuntu-24.04` for amd64 and `ubuntu-24.04-arm` for arm64), uploads a uniquely named evidence artifact even when the contract fails, and then enforces the runner outcome. Family and central aggregators require the exact expected `(family, version, platform)` result set. Missing, duplicate, unexpected, malformed, or non-passing results fail the gate.
 
-Direct per-image push and manual release workflows remain available. Their path filters intentionally cover production build inputs, while functional-test-only pull-request coverage is owned by the central unfiltered workflow. Manual publication is accepted only when the selected ref is `main`.
+Direct per-image push and manual release wrappers remain available. Their path filters intentionally cover production build inputs, while functional-test-only pull-request coverage is owned by the central unfiltered workflow. Manual publication is accepted only when the selected ref is `main`.
 
-### Current permission limitation
+### Release permission boundary
 
-The centrally orchestrated jobs set `push: false`, do not inherit secrets, and guard both architecture publication and manifest publication. However, the current nested reusable release graph still declares `packages: write` and `id-token: write`, so the caller must request those token capabilities even on pull requests. GitHub prevents a called workflow from elevating permissions above its caller, which makes this a structural constraint of the combined build-and-publish graph rather than a publishing switch alone.
+The central workflow and all family build workflows are read-only. They set `export_image: false` for pull requests and merge-queue candidates, never log in to the registry, and contain no push or signing operation.
 
-Splitting read-only contract building from the write-capable publishing graph is required follow-up work. Until that split is complete, the central workflow must use `pull_request`, never `pull_request_target`, and repository owners should treat same-repository pull requests as write-capable workflow code.
+A trusted main-branch release has two phases:
+
+1. `release_build` calls the same read-only family workflow with `export_image: true`. Only after static checks, smoke, the functional contract, SBOM generation, and the Trivy gate succeed does the builder save the architecture-tagged image as a run-scoped artifact.
+2. `release_publish` receives `packages: write` and `id-token: write`, downloads only the named artifact from the current workflow run, verifies its repository, commit SHA, run ID, run attempt, version, platform, local image ID, byte size, and SHA-256 digest, and then pushes and signs it. Each publisher records its immutable registry digest; manifest publication validates the complete expected record set and composes only from `image@sha256:…` references after every expected architecture succeeds.
+
+The release wrapper serializes runs per family and ref without cancelling an active publisher. This prevents two main-branch runs from concurrently overwriting the same architecture tags. Architecture and manifest publishers also require their commit to remain an ancestor of current `main` and compare intervening paths immediately before writing. A newer documentation-only or unrelated-family commit is allowed; a force-pushed lineage or a newer change to the same family or a shared release input fails closed. Self-tests require this path classifier to equal every wrapper's push trigger paths. The accepted design is recorded in [ADR 0002](adr/0002-tested-image-publication-boundary.md).
+
+Release archive names include the workflow run attempt. To retry a failed release, use **Re-run all jobs**. Re-running only failed jobs cannot combine successful architecture archives from an older attempt with newly built archives and therefore fails closed.
 
 After the workflow has run once, configure branch protection or the repository ruleset to require `Image contract gate`.
 
@@ -157,13 +164,12 @@ After the workflow has run once, configure branch protection or the repository r
 
 The current contracts establish baseline runtime compatibility. Production promotion should also require:
 
-1. Split the read-only pull-request build graph from registry publication and OIDC signing permissions.
-2. Pull each final digest on native amd64 and arm64 after manifest publication.
-3. Verify cosign certificate identity and issuer, not only signature presence.
-4. Retrieve an OCI-attached SBOM and provenance statement for the same digest.
-5. Test clean shutdown and restart with persisted data for all stateful services.
-6. Test backup and restore for MariaDB, PostgreSQL, and MongoDB.
-7. Test supported-version upgrades with retained data.
-8. Test authenticated and TLS-enabled service configuration.
-9. Test Helm charts in kind, including readiness, disruption, NetworkPolicy, and failover.
-10. Add deliberate rootfs workflow-policy violations that prove every L0 gate fails closed.
+1. Pull each final digest on native amd64 and arm64 after manifest publication.
+2. Verify cosign certificate identity and issuer, not only signature presence.
+3. Retrieve an OCI-attached SBOM and provenance statement for the same digest.
+4. Test clean shutdown and restart with persisted data for all stateful services.
+5. Test backup and restore for MariaDB, PostgreSQL, and MongoDB.
+6. Test supported-version upgrades with retained data.
+7. Test authenticated and TLS-enabled service configuration.
+8. Test Helm charts in kind, including readiness, disruption, NetworkPolicy, and failover.
+9. Add deliberate rootfs workflow-policy violations that prove every L0 gate fails closed.

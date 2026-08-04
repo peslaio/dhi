@@ -48,16 +48,22 @@ on:
 
 jobs:
   publish:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
     permissions:
+      actions: read
       contents: read
       id-token: write
       packages: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     outputs:
       digest: ${{ steps.publish.outputs.digest }}
 
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
       - name: Prepare image metadata
         id: meta
         env:
@@ -66,7 +72,6 @@ jobs:
           IMAGE_NAME: ${{ inputs.image_name }}
           IMAGE_VERSION: ${{ inputs.image_version }}
           DEBIAN_SUITE: ${{ inputs.debian_suite }}
-          DEBIAN_ARCHES: ${{ inputs.debian_arches }}
         run: |
           set -euo pipefail
           namespace="${NAMESPACE:-$GITHUB_REPOSITORY_OWNER}"
@@ -77,12 +82,61 @@ jobs:
           {
             echo "image_ref=$image_ref"
             echo "primary_tag=$primary_tag"
-            echo "source_tags<<EOF"
-            for arch in $DEBIAN_ARCHES; do
-              echo "${primary_tag}-${arch}"
-            done
-            echo "EOF"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Download immutable architecture digests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: image-release-digest--${{ inputs.image_name }}--${{ inputs.image_version }}--${{ inputs.debian_suite }}--*--attempt-${{ github.run_attempt }}
+          path: artifacts/published
+          merge-multiple: true
+
+      - name: Verify immutable manifest sources
+        id: sources
+        env:
+          IMAGE_REF: ${{ steps.meta.outputs.image_ref }}
+        run: |
+          set -euo pipefail
+          python3 tests/functional/releasectl.py manifest-sources \
+            --records artifacts/published \
+            --github-output "$GITHUB_OUTPUT" \
+            --image-name "${{ inputs.image_name }}" \
+            --image-version "${{ inputs.image_version }}" \
+            --debian-suite "${{ inputs.debian_suite }}" \
+            --debian-arches "${{ inputs.debian_arches }}" \
+            --image-ref "$IMAGE_REF" \
+            --repository "$GITHUB_REPOSITORY" \
+            --commit-sha "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
+
+      - name: Reject newer release inputs on main
+        env:
+          IMAGE_NAME: ${{ inputs.image_name }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin refs/heads/main
+          main_sha="$(git rev-parse FETCH_HEAD)"
+          if ! printf '%s\n' "$main_sha" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "Could not resolve the current main commit" >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" "$main_sha"; then
+            echo "Refusing to publish commit $GITHUB_SHA because it is not an ancestor of current main $main_sha" >&2
+            exit 1
+          fi
+          if [ "$main_sha" = "$GITHUB_SHA" ]; then
+            echo "Release commit is current on main"
+          else
+            changed_files="$RUNNER_TEMP/dhi-newer-main-paths.txt"
+            git log --format= --name-only --no-renames "$GITHUB_SHA..$main_sha" \
+              | sed '/^$/d' \
+              | sort -u \
+              > "$changed_files"
+            python3 tests/functional/releasectl.py guard-current \
+              --image-name "$IMAGE_NAME" \
+              --changed-files "$changed_files"
+          fi
 
       - name: Log in to registry
         uses: docker/login-action@v4
@@ -95,18 +149,18 @@ jobs:
         id: publish
         env:
           PRIMARY_TAG: ${{ steps.meta.outputs.primary_tag }}
-          SOURCE_TAGS: ${{ steps.meta.outputs.source_tags }}
+          SOURCE_REFS: ${{ steps.sources.outputs.source_refs }}
         run: |
           set -euo pipefail
           refs=()
           while IFS= read -r tag; do
             [ -n "$tag" ] || continue
             refs+=("$tag")
-          done <<< "$SOURCE_TAGS"
+          done <<< "$SOURCE_REFS"
 
           docker buildx imagetools create --tag "$PRIMARY_TAG" "${refs[@]}"
           digest="$(docker buildx imagetools inspect "$PRIMARY_TAG" | sed -n 's/^Digest:[[:space:]]*//p' | head -n 1)"
-          if [ -z "$digest" ]; then
+          if ! printf '%s\n' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
             echo "Failed to resolve published manifest digest for $PRIMARY_TAG" >&2
             exit 1
           fi

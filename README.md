@@ -48,6 +48,7 @@ Read the evidence before adoption:
 - [Current architecture and weak points](docs/architecture.md)
 - [Image test strategy](docs/testing.md)
 - [Functional image contract decision](docs/adr/0001-functional-image-contracts.md)
+- [Tested-image publication decision](docs/adr/0002-tested-image-publication-boundary.md)
 - [Conservative quality scorecard](docs/image-quality-scorecard.md)
 - [Package differences against upstream images](docs/package-diff-upstream.md)
 
@@ -80,10 +81,12 @@ The CI workflow renders normal mode, OpenShift mode, and NetworkPolicy mode for 
 
 Image workflows live in `.github/workflows/`.
 
-Each application workflow calls:
+Each application build workflow calls:
 
 - `.github/workflows/reusable-build-debian-image.yml`
-- `.github/workflows/reusable-publish-image-manifest.yml`
+- `.github/workflows/reusable-aggregate-image-contract.yml`
+
+Pull-request and merge-queue callers grant only read access. Per-family release wrappers first run the same read-only build and test graph with image export enabled. A separate write-scoped publisher then verifies the same-run archive, pushes and signs architecture tags, and calls `.github/workflows/reusable-publish-image-manifest.yml`.
 
 The build workflow:
 
@@ -95,7 +98,8 @@ The build workflow:
 6. Verifies package, user, shell, and package-manager policy.
 7. Runs a process smoke test and a representative application contract.
 8. Generates an SBOM and scans with Trivy.
-9. Pushes and signs architecture artifacts and the final manifest.
+9. For a trusted release only, exports the tested image and identity metadata as a one-day workflow artifact.
+10. In a separate release-only job, verifies the archive, pushes and signs architecture tags, and publishes and signs the final manifest.
 
 ## Local Verification
 

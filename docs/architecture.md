@@ -1,6 +1,6 @@
 # DHI Image Architecture
 
-This document describes the architecture implemented in this repository as of 2026-08-03. It separates current behavior from the target design so that experimental work is not presented as a production guarantee.
+This document describes the architecture implemented in this repository as of 2026-08-04. It separates current behavior from the target design so that experimental work is not presented as a production guarantee.
 
 ## Scope
 
@@ -17,7 +17,7 @@ The Helm charts in `charts/` are a separate deployment layer. Their presence doe
 ## Current System
 
 ```text
-unfiltered PR / merge-group workflow
+unfiltered PR / merge-group workflow (read-only)
         |
         +-- validate 20 specs, 16 suites, and 35 declared legs
         +-- calculate affected image families from the actual diff
@@ -27,10 +27,10 @@ unfiltered PR / merge-group workflow
         v
 stable Image contract gate
 
-per-image push or manual workflow
+per-image main push or manual release wrapper
         |
         v
-reusable-build-debian-image.yml
+family workflow -> reusable-build-debian-image.yml (read-only)
         |
         +-- mmdebstrap minbase + declared packages
         +-- optional third-party APT repository
@@ -40,12 +40,19 @@ reusable-build-debian-image.yml
         +-- process smoke test
         +-- Docker Compose application contract
         +-- SPDX SBOM + Trivy gate
-        +-- architecture tag push + keyless cosign signature
+        +-- release-only Docker archive + bound metadata artifact
         |
         v
-reusable-publish-image-manifest.yml
+reusable-publish-tested-image.yml (packages/OIDC write)
         |
-        +-- combine native amd64 and arm64 artifacts
+        +-- verify same-run provenance, archive digest, platform, and image ID
+        +-- push architecture tag + keyless cosign signature
+        +-- wait for every expected architecture
+        |
+        v
+reusable-publish-image-manifest.yml (packages/OIDC write)
+        |
+        +-- combine verified native amd64 and arm64 digest references
         +-- publish version-suite manifest
         +-- keyless cosign signature on manifest digest
 ```
@@ -85,7 +92,8 @@ This profile is a hardened Debian image construction method, not a distroless-eq
 7. A smoke test validates process startup, command output, TCP, or HTTP behavior.
 8. A Compose application contract builds or configures a representative consumer and exercises an application-level operation. The common runner proves the local source-image identity, applies a wall-clock deadline, captures evidence before teardown, and emits a canonical result.
 9. Syft emits an SPDX JSON SBOM and Trivy gates fixable HIGH and CRITICAL package vulnerabilities.
-10. Architecture-specific tags are pushed and signed. A separate workflow assembles and signs the multi-architecture manifest.
+10. A release build saves the tested architecture image as a short-lived same-run artifact. Metadata binds the archive digest and size to the repository, commit, run attempt, image ID, version, suite, and platform.
+11. A separate write-scoped publisher verifies and loads that archive, pushes and signs the architecture digest, and then assembles and signs the multi-architecture manifest. Pull-request and merge-queue graphs never receive package or OIDC write capability.
 
 ## Security Boundaries
 
@@ -118,6 +126,7 @@ Non-root metadata does not prevent a Kubernetes workload from overriding the use
 - Every image family has an application-level contract, including data write/read operations for stateful services.
 - Native amd64 and arm64 runners test the platform that will be published.
 - SBOM generation, vulnerability gating, and keyless signing are part of the common workflow.
+- Read-only validation is structurally separate from registry login, push, and OIDC signing; release publication consumes the exact image archive that passed the gates.
 - Separate image workflows provide clear ownership and failure isolation while retaining a common implementation.
 
 ## Real Weak Points
@@ -150,16 +159,6 @@ Redis and MongoDB development configurations allow unauthenticated network acces
 
 Version, suite, architecture, and contract timeout now have validated authorities. Package roots, runtime closure paths, commands, and several version-specific filenames still live in family workflows. Changing a single-version specification without updating those construction inputs can therefore produce a semantically inconsistent build even though the generated matrix is correct.
 
-### Publishing still uses mutable architecture tags
-
-Manifest assembly waits for both build jobs, but it resolves mutable `-amd64` and `-arm64` tags instead of consuming immutable digest outputs. A release should pass and verify exact digests, including their declared platform, before creating the final manifest.
-
-### Pull-request contracts still traverse a write-capable release graph
-
-The central pull-request workflow disables pushing, does not inherit secrets, and guards architecture and manifest publication. The nested family and reusable build workflows nevertheless declare `packages: write` and `id-token: write`, so the current caller must also request those capabilities. A called workflow cannot elevate its token above the caller, which prevents simply downgrading the outer job while the same nested graph handles publication.
-
-The intended boundary is a separate read-only contract-build graph followed by a write-capable publication graph. Until that split is implemented, same-repository pull-request workflow changes must be treated as write-capable code, and the workflow must never be changed to `pull_request_target`.
-
 ### Some gates still lack deliberate failure tests
 
 The contract control plane has daemon-free negative tests for malformed results, failed test exits, OOM termination, identity mismatch, evidence aliasing, and missing evidence. The rootfs package, user, shell, and privilege gates do not yet inject every known violation and prove each check fails closed. The PHP incident shows why positive startup checks are insufficient: the old image passed CI while required runtime files were absent.
@@ -170,11 +169,10 @@ The functional-contract portion now has a validated specification join, generate
 
 1. Move package roots, runtime profile, identity, ports, writable paths, and trusted-key fingerprints into an executable versioned image schema.
 2. Pin remaining third-party actions by commit and verify third-party APT key fingerprints before trust.
-3. Separate read-only contract execution from the write-capable publishing call graph so pull-request jobs never request package or OIDC write capability.
-4. Produce immutable per-architecture digests, OCI-attached SBOMs, and SLSA provenance.
-5. Publish only after native platform tests pass and manifest entries match expected platforms and digests.
-6. Add lifecycle automation for upstream releases, Debian support coverage, scheduled rebuilds, and deprecation.
-7. Promote an image through explicit maturity states: experimental, candidate, and production-supported.
+3. Attach SBOMs and SLSA provenance to the immutable OCI digest.
+4. Pull and verify final manifest entries on native platforms after publication.
+5. Add lifecycle automation for upstream releases, Debian support coverage, scheduled rebuilds, and deprecation.
+6. Promote an image through explicit maturity states: experimental, candidate, and production-supported.
 
 ## Production Decision
 

@@ -1,0 +1,65 @@
+name: Release Python image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/reusable-build-debian-image.yml
+      - .github/workflows/reusable-aggregate-image-contract.yml
+      - .github/workflows/reusable-prepare-image-matrix.yml
+      - .github/workflows/reusable-publish-image-manifest.yml
+      - .github/workflows/reusable-publish-tested-image.yml
+      - tests/functional/releasectl.py
+      - tests/functional/contractctl.rb
+      - .github/workflows/python-image.yml
+      - .github/workflows/python-image-release.yml
+      - images/python/**
+  workflow_dispatch:
+    inputs:
+      push:
+        description: Publish only from main after build, functional contract, SBOM, and scan.
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-image-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate without publishing
+    if: ${{ github.event_name == 'workflow_dispatch' && (!inputs.push || github.ref != 'refs/heads/main') }}
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/python-image.yml
+    with:
+      orchestrated: false
+      export_image: false
+
+  release_build:
+    name: Build, test, and export from main
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.push)) }}
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/python-image.yml
+    with:
+      orchestrated: false
+      export_image: true
+
+  release_publish:
+    name: Publish tested image from main
+    needs: release_build
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/reusable-publish-tested-image.yml
+    with:
+      image_name: python

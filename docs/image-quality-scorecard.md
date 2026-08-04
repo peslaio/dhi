@@ -20,7 +20,7 @@ The full-rootfs images are not at the same maturity. Several offer fewer package
 | Least privilege and runtime hardening | 15 | 12 | Numeric non-root identity is checked; APT tools, setuid/setgid bits, and file capabilities are removed; closure images can remove shells. Full-rootfs images retain broader tooling and users can override OCI metadata. |
 | Functional correctness | 20 | 10 | Every family now has an application contract, but current native CI has not completed, PHP is known broken until rebuilt, RabbitMQ has no passing functional run, and service lifecycle coverage remains shallow. |
 | Supply chain and reproducibility | 20 | 7 | SBOM, Trivy, and keyless cosign exist. Inputs/actions are mutable, third-party key fingerprints are not checked, SBOMs are not OCI-attached, provenance is absent, and manifests consume mutable tags. |
-| Platform and release assurance | 15 | 7 | Native amd64/arm64 jobs and signed manifests are designed. Most families have not yet been republished under `peslaio`, and manifest assembly uses mutable architecture tags. |
+| Platform and release assurance | 15 | 7 | Native amd64/arm64 jobs, tested-image archive handoff, immutable architecture digest records, and signed manifests are designed. Most families have not yet been republished under `peslaio`, and final native-platform pull verification is still missing. |
 | Maintenance and usability | 10 | 3 | Per-image workflows and package docs are clear. There is no lifecycle automation, rebuild SLA, compatibility policy, or support commitment; some defaults are EOL. |
 | **Total** | **100** | **50** | **Useful candidate architecture with material unresolved release and maintenance risk.** |
 

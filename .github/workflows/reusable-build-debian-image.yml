@@ -210,15 +210,10 @@ on:
         required: false
         default: false
         type: boolean
-      push:
-        description: Push the image to the registry after local build and smoke test.
+      export_image:
+        description: Export the fully tested architecture image as a run-scoped release artifact.
         required: false
         default: false
-        type: boolean
-      push_primary_tag:
-        description: Push the non-architecture tag from this build. Disable for matrix builds that publish a manifest later.
-        required: false
-        default: true
         type: boolean
       generate_sbom:
         description: Generate an SPDX JSON SBOM with Syft.
@@ -240,16 +235,6 @@ on:
         required: false
         default: ""
         type: string
-      sign:
-        description: Sign the pushed image digest with cosign keyless signing.
-        required: false
-        default: true
-        type: boolean
-    secrets:
-      registry_username:
-        required: false
-      registry_password:
-        required: false
     outputs:
       image_ref:
         description: Registry image reference without a tag.
@@ -257,23 +242,17 @@ on:
       primary_tag:
         description: Primary image tag.
         value: ${{ jobs.build.outputs.primary_tag }}
-      digest:
-        description: Pushed image digest, when push is enabled.
-        value: ${{ jobs.build.outputs.digest }}
 
 jobs:
   build:
-    runs-on: ${{ inputs.debian_arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
-    timeout-minutes: 90
     permissions:
       actions: read
       contents: read
-      id-token: write
-      packages: write
+    runs-on: ${{ inputs.debian_arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 90
     outputs:
       image_ref: ${{ steps.meta.outputs.image_ref }}
       primary_tag: ${{ steps.meta.outputs.primary_tag }}
-      digest: ${{ steps.publish.outputs.digest }}
 
     steps:
       - name: Check out repository
@@ -770,6 +749,25 @@ jobs:
             "${tag_args[@]}" \
             "$build_dir"
 
+      - name: Capture image identity used by tests
+        id: tested-image
+        env:
+          PRIMARY_TAG: ${{ steps.meta.outputs.primary_tag }}
+          ARCH_TAG: ${{ steps.meta.outputs.arch_tag }}
+        run: |
+          set -euo pipefail
+          primary_id="$(docker image inspect "$PRIMARY_TAG" --format '{{.Id}}')"
+          arch_id="$(docker image inspect "$ARCH_TAG" --format '{{.Id}}')"
+          if ! printf '%s\n' "$primary_id" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+            echo "Invalid local image ID for $PRIMARY_TAG: $primary_id" >&2
+            exit 1
+          fi
+          if [ "$primary_id" != "$arch_id" ]; then
+            echo "Primary and architecture tags do not identify the same image" >&2
+            exit 1
+          fi
+          echo "image_id=$primary_id" >> "$GITHUB_OUTPUT"
+
       - name: Verify static image contract
         env:
           PRIMARY_TAG: ${{ steps.meta.outputs.primary_tag }}
@@ -1017,8 +1015,8 @@ jobs:
         with:
           image: ${{ steps.meta.outputs.primary_tag }}
           format: spdx-json
-          output-file: sbom-${{ inputs.image_name }}-${{ inputs.debian_suite }}-${{ inputs.debian_arch }}.spdx.json
-          artifact-name: sbom-${{ inputs.image_name }}-${{ inputs.debian_suite }}-${{ inputs.debian_arch }}
+          output-file: sbom-${{ inputs.image_name }}-${{ inputs.image_version }}-${{ inputs.debian_suite }}-${{ inputs.debian_arch }}.spdx.json
+          artifact-name: sbom-${{ inputs.image_name }}-${{ inputs.image_version }}-${{ inputs.debian_suite }}-${{ inputs.debian_arch }}-attempt-${{ github.run_attempt }}
 
       - name: Scan image
         if: inputs.scan
@@ -1033,64 +1031,39 @@ jobs:
           vuln-type: os,library
           severity: HIGH,CRITICAL
 
-      - name: Log in to registry
-        if: inputs.push
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ inputs.registry }}
-          username: ${{ secrets.registry_username || github.actor }}
-          password: ${{ secrets.registry_password || github.token }}
-
-      - name: Push image
-        if: inputs.push
-        id: publish
+      - name: Export fully tested image for release
+        if: inputs.export_image
         env:
-          PRIMARY_TAG: ${{ steps.meta.outputs.primary_tag }}
-          ARCH_TAG: ${{ steps.meta.outputs.arch_tag }}
-          PUSH_PRIMARY_TAG: ${{ inputs.push_primary_tag }}
-        run: |
-          set -euo pipefail
-          digest_tag="$ARCH_TAG"
-          if [ "$PUSH_PRIMARY_TAG" = "true" ]; then
-            docker push "$ARCH_TAG"
-            push_output="$(docker push "$PRIMARY_TAG")"
-            digest_tag="$PRIMARY_TAG"
-          else
-            push_output="$(docker push "$ARCH_TAG")"
-          fi
-          printf '%s\n' "$push_output"
-          digest="$(printf '%s\n' "$push_output" | sed -n 's/.*digest: \(sha256:[0-9a-f]\+\).*/\1/p' | tail -n 1)"
-          if [ -z "$digest" ]; then
-            digest="$(docker buildx imagetools inspect "$digest_tag" | sed -n 's/^Digest:[[:space:]]*//p' | head -n 1)"
-          fi
-          if [ -z "$digest" ]; then
-            echo "Failed to resolve pushed digest for $digest_tag" >&2
-            exit 1
-          fi
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          echo "Published $digest_tag@$digest"
-
-      - name: Install cosign
-        if: inputs.push && inputs.sign
-        uses: sigstore/cosign-installer@v4.0.0
-
-      - name: Sign pushed digest
-        if: inputs.push && inputs.sign
-        env:
+          IMAGE_NAME: ${{ inputs.image_name }}
+          IMAGE_VERSION: ${{ inputs.image_version }}
+          DEBIAN_SUITE: ${{ inputs.debian_suite }}
+          DEBIAN_ARCH: ${{ inputs.debian_arch }}
+          PLATFORM: ${{ inputs.platform }}
           IMAGE_REF: ${{ steps.meta.outputs.image_ref }}
-          DIGEST: ${{ steps.publish.outputs.digest }}
+          TESTED_IMAGE_ID: ${{ steps.tested-image.outputs.image_id }}
         run: |
           set -euo pipefail
-          image_digest="$IMAGE_REF@$DIGEST"
-          attempt=1
-          max_attempts=5
-          until cosign sign --yes "$image_digest"; do
-            if [ "$attempt" -ge "$max_attempts" ]; then
-              echo "Failed to sign $image_digest after $attempt attempts" >&2
-              exit 1
-            fi
-            delay=$((attempt * 15))
-            echo "Signing $image_digest failed on attempt $attempt. Retrying in ${delay}s..." >&2
-            sleep "$delay"
-            attempt=$((attempt + 1))
-          done
+          python3 tests/functional/releasectl.py create \
+            --archive artifacts/release/image.tar \
+            --metadata artifacts/release/release-image.json \
+            --image-name "$IMAGE_NAME" \
+            --image-version "$IMAGE_VERSION" \
+            --debian-suite "$DEBIAN_SUITE" \
+            --debian-arch "$DEBIAN_ARCH" \
+            --platform "$PLATFORM" \
+            --image-ref "$IMAGE_REF" \
+            --expected-image-id "$TESTED_IMAGE_ID" \
+            --repository "$GITHUB_REPOSITORY" \
+            --commit-sha "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
+
+      - name: Upload tested image for release
+        if: inputs.export_image
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-release-archive--${{ inputs.image_name }}--${{ inputs.image_version }}--${{ inputs.debian_suite }}--${{ inputs.debian_arch }}--attempt-${{ github.run_attempt }}
+          path: artifacts/release
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0

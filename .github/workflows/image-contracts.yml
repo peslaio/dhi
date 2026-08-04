@@ -123,12 +123,10 @@ jobs:
     permissions:
       actions: read
       contents: read
-      id-token: write
-      packages: write
     uses: ./.github/workflows/apache-image.yml
     with:
       orchestrated: true
-      push: false
+      export_image: false
 
   caddy:
     needs: [preflight, plan]
@@ -136,12 +134,10 @@ jobs:
     permissions:
       actions: read
       contents: read
-      id-token: write
-      packages: write
     uses: ./.github/workflows/caddy-image.yml
     with:
       orchestrated: true
-      push: false
+      export_image: false
 
   dotnet_aspnet:
     needs: [preflight, plan]
@@ -149,12 +145,10 @@ jobs:
     permissions:
       actions: read
       contents: read
-      id-token: write
-      packages: write
     uses: ./.github/workflows/dotnet-aspnet-images.yml
     with:
       orchestrated: true
-      push: false
+      export_image: false
 
   dotnet_runtime:
     needs: [preflight, plan]
@@ -162,12 +156,10 @@ jobs:
     permissions:
       actions: read
       contents: read
-      id-token: write
-      packages: write
     uses: ./.github/workflows/dotnet-runtime-images.yml
     with:
       orchestrated: true
-      push: false
+      export_image: false
 
   haproxy:
     needs: [preflight, plan]
@@ -175,12 +167,10 @@ jobs:
     permissions:
       actions: read
       contents: read
-      id-token: write
-      packages: write
     uses: ./.github/workflows/haproxy-image.yml
     with:
       orchestrated: true
-      push: false
+      export_image: false
 
   java_jre:
     needs: [preflight, plan]
@@ -188,12 +178,10 @@ jobs:
     permissions:
       actions: read
       contents: read
-      id-token: write
-      packages: write
     uses: ./.github/workflows/java-jre-image.yml
     with:
       orchestrated: true
-      push: false
+      export_image: false
 
   mariadb:
     needs: [preflight, plan]
@@ -201,12 +189,10 @@ jobs:
     permissions:
       actions: read
       contents: read
-      id-token: write
-      packages: write
     uses: ./.github/workflows/mariadb-image.yml
     with:
       orchestrated: true
-      push: false
+      export_image: false
 
   memcached:
     needs: [preflight, plan]
@@ -214,12 +200,10 @@ jobs:
     permissions:
       actions: read
       contents: read
-      id-token: write
-      packages: write
     uses: ./.github/workflows/memcached-image.yml
     with:
       orchestrated: true
-      push: false
+      export_image: false
 
   mongodb:
     needs: [preflight, plan]
@@ -227,12 +211,10 @@ jobs:
     permissions:
       actions: read
       contents: read
-      id-token: write
-      packages: write
     uses: ./.github/workflows/mongodb-image.yml
     with:
       orchestrated: true
-      push: false
+      export_image: false
 
   nginx:
     needs: [preflight, plan]
@@ -240,12 +222,10 @@ jobs:
     permissions:
       actions: read
       contents: read
-      id-token: write
-      packages: write
     uses: ./.github/workflows/nginx-image.yml
     with:
       orchestrated: true
-      push: false
+      export_image: false
 
   node:
     needs: [preflight, plan]
@@ -253,12 +233,10 @@ jobs:
     permissions:
       actions: read
       contents: read
-      id-token: write
-      packages: write
     uses: ./.github/workflows/node-image.yml
     with:
       orchestrated: true
-      push: false
+      export_image: false
 
   php_fpm:
     needs: [preflight, plan]
@@ -266,12 +244,10 @@ jobs:
     permissions:
       actions: read
       contents: read
-      id-token: write
-      packages: write
     uses: ./.github/workflows/php-fpm-image.yml
     with:
       orchestrated: true
-      push: false
+      export_image: false
 
   postgresql:
     needs: [preflight, plan]
@@ -279,12 +255,10 @@ jobs:
     permissions:
       actions: read
       contents: read
-      id-token: write
-      packages: write
     uses: ./.github/workflows/postgresql-image.yml
     with:
       orchestrated: true
-      push: false
+      export_image: false
 
   python:
     needs: [preflight, plan]
@@ -292,12 +266,10 @@ jobs:
     permissions:
       actions: read
       contents: read
-      id-token: write
-      packages: write
     uses: ./.github/workflows/python-image.yml
     with:
       orchestrated: true
-      push: false
+      export_image: false
 
   rabbitmq:
     needs: [preflight, plan]
@@ -305,12 +277,10 @@ jobs:
     permissions:
       actions: read
       contents: read
-      id-token: write
-      packages: write
     uses: ./.github/workflows/rabbitmq-image.yml
     with:
       orchestrated: true
-      push: false
+      export_image: false
 
   redis:
     needs: [preflight, plan]
@@ -318,12 +288,10 @@ jobs:
     permissions:
       actions: read
       contents: read
-      id-token: write
-      packages: write
     uses: ./.github/workflows/redis-image.yml
     with:
       orchestrated: true
-      push: false
+      export_image: false
 
   gate:
     name: Image contract gate

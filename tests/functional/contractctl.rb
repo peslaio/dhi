@@ -546,7 +546,12 @@ module DhiContracts
   def family_for_workflow(path, families)
     basename = File.basename(path)
     families.find do |family|
-      ["#{family}-image.yml", "#{family}-image.yaml", "#{family}-images.yml", "#{family}-images.yaml"].include?(basename)
+      [
+        "#{family}-image.yml", "#{family}-image.yaml",
+        "#{family}-images.yml", "#{family}-images.yaml",
+        "#{family}-image-release.yml", "#{family}-image-release.yaml",
+        "#{family}-images-release.yml", "#{family}-images-release.yaml"
+      ].include?(basename)
     end
   end
 

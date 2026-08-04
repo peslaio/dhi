@@ -8,6 +8,12 @@ services:
     labels:
       io.pesla.dhi.functional.role: fixture
     command: [serve, --port, "8080", --body, dhi-haproxy-proxy-ok]
+    healthcheck:
+      test: [CMD, python, /harness/probe.py, http, --url, http://127.0.0.1:8080/, --contains, dhi-haproxy-proxy-ok, --timeout, "5"]
+      start_period: 10s
+      interval: 2s
+      timeout: 6s
+      retries: 5
     read_only: true
     tmpfs: [/tmp]
     cap_drop: [ALL]
@@ -25,7 +31,9 @@ services:
     labels:
       io.pesla.dhi.functional.role: sut
       io.pesla.dhi.functional.identity-mode: derived-rootfs-prefix
-    depends_on: [backend]
+    depends_on:
+      backend:
+        condition: service_healthy
     read_only: true
     tmpfs:
       - /run/haproxy:uid=10001,gid=0,mode=0770

@@ -47,6 +47,7 @@ Read the evidence before adoption:
 
 - [Current architecture and weak points](docs/architecture.md)
 - [Image test strategy](docs/testing.md)
+- [Production functionality acceptance plan](docs/production-functionality-test-plan.md)
 - [Functional image contract decision](docs/adr/0001-functional-image-contracts.md)
 - [Tested-image publication decision](docs/adr/0002-tested-image-publication-boundary.md)
 - [Conservative quality scorecard](docs/image-quality-scorecard.md)

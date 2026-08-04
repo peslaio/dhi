@@ -169,6 +169,8 @@ After the workflow has run once, configure branch protection or the repository r
 
 ## Required Follow-Up Tests
 
+The complete planning-only acceptance matrix is documented in [Production Functionality Acceptance Plan](production-functionality-test-plan.md). It defines bounded capability claims, common evidence, candidate-digest validation, and family-specific release, lifecycle, upgrade, recovery, and Kubernetes scenarios. It does not imply that those tests are implemented today.
+
 The current contracts establish baseline runtime compatibility. Production promotion should also require:
 
 1. Pull each final digest on native amd64 and arm64 after manifest publication.

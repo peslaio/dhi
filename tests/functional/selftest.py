@@ -5,6 +5,7 @@ import copy
 import io
 import json
 import pathlib
+import re
 import subprocess
 import tempfile
 import types
@@ -542,7 +543,7 @@ class ReleaseArchiveTests(unittest.TestCase):
                 self.assertFalse(releasectl.release_relevant_path("redis", path))
 
 
-class WorkflowPermissionTests(unittest.TestCase):
+class WorkflowPolicyTests(unittest.TestCase):
     CORE_WORKFLOWS = {
         "apache-image.yml",
         "caddy-image.yml",
@@ -712,11 +713,66 @@ class WorkflowPermissionTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("/tmp:uid=10001,gid=0,mode=1777", compose)
-        self.assertIn(
-            "writable_paths: /tmp /run/php-fpm",
-            workflow,
+        writable_paths = next(
+            line.partition(":")[2].strip().split()
+            for line in workflow.splitlines()
+            if line.strip().startswith("writable_paths:")
         )
-        self.assertIn('path: /tmp\n    owner: 10001:0\n    mode: "1777"', image_spec)
+        self.assertIn("/tmp", writable_paths)
+        self.assertRegex(
+            image_spec,
+            r'(?m)^  - path: /tmp\n    owner: 10001:0\n    mode: "1777"$',
+        )
+
+    def test_workflows_use_node24_action_generations(self):
+        root = pathlib.Path(__file__).resolve().parents[2]
+        workflow_dir = root / ".github" / "workflows"
+        workflow_paths = sorted(
+            set(workflow_dir.glob("*.yml"))
+            | set(workflow_dir.glob("*.yaml"))
+        )
+        action_refs = {
+            match.group(1)
+            for path in workflow_paths
+            for match in re.finditer(
+                r"(?m)^\s*uses:\s*([^\s#]+)",
+                path.read_text(encoding="utf-8"),
+            )
+            if not match.group(1).startswith("./")
+        }
+        minimum_node24_versions = {
+            "actions/checkout": (6, 0, 0),
+            "actions/download-artifact": (7, 0, 0),
+            "actions/upload-artifact": (6, 0, 0),
+            "anchore/sbom-action": (0, 24, 0),
+            "azure/setup-helm": (5, 0, 0),
+            "docker/login-action": (4, 0, 0),
+        }
+        audited_composite_actions = {
+            "aquasecurity/trivy-action",
+            "sigstore/cosign-installer",
+        }
+        action_names = {ref.rpartition("@")[0] for ref in action_refs}
+        self.assertEqual(
+            action_names,
+            set(minimum_node24_versions) | audited_composite_actions,
+        )
+
+        for ref in action_refs:
+            action_name, separator, version = ref.rpartition("@")
+            self.assertEqual(separator, "@", ref)
+            if action_name not in minimum_node24_versions:
+                continue
+            with self.subTest(action=ref):
+                match = re.fullmatch(r"v(\d+)(?:\.(\d+))?(?:\.(\d+))?", version)
+                self.assertIsNotNone(match, ref)
+                parsed_version = tuple(
+                    int(component or 0) for component in match.groups()
+                )
+                self.assertGreaterEqual(
+                    parsed_version,
+                    minimum_node24_versions[action_name],
+                )
 
     def test_write_permissions_and_operations_are_confined_to_release_graph(self):
         root = pathlib.Path(__file__).resolve().parents[2]

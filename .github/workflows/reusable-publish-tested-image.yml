@@ -56,7 +56,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download tested image archive
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: image-release-archive--${{ inputs.image_name }}--${{ matrix.version }}--${{ matrix.debian_suite }}--${{ matrix.debian_arch }}--attempt-${{ github.run_attempt }}
           path: artifacts/release
@@ -194,7 +194,7 @@ jobs:
             --run-attempt "$GITHUB_RUN_ATTEMPT"
 
       - name: Upload immutable architecture digest
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: image-release-digest--${{ inputs.image_name }}--${{ matrix.version }}--${{ matrix.debian_suite }}--${{ matrix.debian_arch }}--attempt-${{ github.run_attempt }}
           path: artifacts/published/${{ matrix.debian_arch }}.json

@@ -1077,7 +1077,7 @@ jobs:
 
       - name: Upload functional contract evidence
         if: ${{ always() && inputs.functional_test }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: image-contract-result--${{ inputs.image_name }}--${{ inputs.image_version }}--${{ inputs.debian_arch }}
           path: artifacts/functional
@@ -1098,7 +1098,7 @@ jobs:
 
       - name: Generate SBOM
         if: inputs.generate_sbom
-        uses: anchore/sbom-action@v0.20.10
+        uses: anchore/sbom-action@v0.24.0
         with:
           image: ${{ steps.meta.outputs.primary_tag }}
           format: spdx-json
@@ -1147,7 +1147,7 @@ jobs:
 
       - name: Upload tested image for release
         if: inputs.export_image
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: image-release-archive--${{ inputs.image_name }}--${{ inputs.image_version }}--${{ inputs.debian_suite }}--${{ inputs.debian_arch }}--attempt-${{ github.run_attempt }}
           path: artifacts/release

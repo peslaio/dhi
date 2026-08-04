@@ -41,7 +41,7 @@ jobs:
       - name: Download family result artifacts
         if: ${{ always() }}
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: image-contract-result--${{ inputs.image_name }}--*
           path: artifacts/results

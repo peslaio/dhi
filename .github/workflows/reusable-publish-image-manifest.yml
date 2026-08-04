@@ -174,11 +174,16 @@ jobs:
           fi
 
       - name: Log in to registry
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ inputs.registry }}
-          username: ${{ secrets.registry_username || github.actor }}
-          password: ${{ secrets.registry_password || github.token }}
+        env:
+          REGISTRY: ${{ inputs.registry }}
+          REGISTRY_USERNAME: ${{ secrets.registry_username || github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.registry_password || github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$REGISTRY_PASSWORD" \
+            | python3 tests/functional/releasectl.py registry-login \
+                --registry "$REGISTRY" \
+                --username "$REGISTRY_USERNAME"
 
       - name: Publish run-scoped candidate manifest
         id: publish
@@ -196,8 +201,10 @@ jobs:
           done <<< "$SOURCE_REFS"
 
           candidate_tag="${IMAGE_REF}:candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${IMAGE_VERSION}-${DEBIAN_SUITE}"
-          docker buildx imagetools create --tag "$candidate_tag" "${refs[@]}"
-          digest="$(docker buildx imagetools inspect "$candidate_tag" | sed -n 's/^Digest:[[:space:]]*//p' | head -n 1)"
+          python3 tests/functional/releasectl.py registry-command -- \
+            docker buildx imagetools create --tag "$candidate_tag" "${refs[@]}"
+          digest="$(python3 tests/functional/releasectl.py registry-digest \
+            --reference "$candidate_tag")"
           if ! printf '%s\n' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
             echo "Failed to resolve candidate manifest digest for $candidate_tag" >&2
             exit 1
@@ -278,11 +285,16 @@ jobs:
             --run-attempt "$GITHUB_RUN_ATTEMPT"
 
       - name: Log in to registry for candidate pull
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ inputs.registry }}
-          username: ${{ secrets.registry_username || github.actor }}
-          password: ${{ secrets.registry_password || github.token }}
+        env:
+          REGISTRY: ${{ inputs.registry }}
+          REGISTRY_USERNAME: ${{ secrets.registry_username || github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.registry_password || github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$REGISTRY_PASSWORD" \
+            | python3 tests/functional/releasectl.py registry-login \
+                --registry "$REGISTRY" \
+                --username "$REGISTRY_USERNAME"
 
       - name: Install cosign
         if: inputs.sign
@@ -339,19 +351,23 @@ jobs:
             exit 1
           fi
           expected_member_digest="${member_ref##*@}"
-          observed_index_digest="$(docker buildx imagetools inspect "$source_ref" | sed -n 's/^Digest:[[:space:]]*//p' | head -n 1)"
+          observed_index_digest="$(python3 tests/functional/releasectl.py registry-digest \
+            --reference "$source_ref" \
+            --expected-digest "$INDEX_DIGEST")"
           if [ "$observed_index_digest" != "$INDEX_DIGEST" ]; then
             echo "Candidate index resolved to $observed_index_digest instead of $INDEX_DIGEST" >&2
             exit 1
           fi
           mkdir -p "$DHI_FUNCTIONAL_ARTIFACT_DIR"
-          docker buildx imagetools inspect "$source_ref" --raw \
+          python3 tests/functional/releasectl.py registry-command -- \
+            docker buildx imagetools inspect "$source_ref" --raw \
             > "$DHI_FUNCTIONAL_ARTIFACT_DIR/index.json"
           python3 tests/functional/releasectl.py verify-index \
             --inspect "$DHI_FUNCTIONAL_ARTIFACT_DIR/index.json" \
             --platform "${{ matrix.platform }}" \
             --expected-digest "$expected_member_digest"
-          docker pull --platform "${{ matrix.platform }}" "$source_ref"
+          python3 tests/functional/releasectl.py registry-command -- \
+            docker pull --platform "${{ matrix.platform }}" "$source_ref"
           tests/functional/run.sh \
             "${{ inputs.image_name }}" \
             "$source_ref" \
@@ -434,11 +450,16 @@ jobs:
           fi
 
       - name: Log in to registry
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ inputs.registry }}
-          username: ${{ secrets.registry_username || github.actor }}
-          password: ${{ secrets.registry_password || github.token }}
+        env:
+          REGISTRY: ${{ inputs.registry }}
+          REGISTRY_USERNAME: ${{ secrets.registry_username || github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.registry_password || github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$REGISTRY_PASSWORD" \
+            | python3 tests/functional/releasectl.py registry-login \
+                --registry "$REGISTRY" \
+                --username "$REGISTRY_USERNAME"
 
       - name: Promote accepted candidate index
         id: promote
@@ -465,8 +486,11 @@ jobs:
             source_ref="${refs[$index]}"
             expected_digest="${source_ref##*@}"
             architecture_tag="${IMAGE_REF}:${{ inputs.image_version }}-${{ inputs.debian_suite }}-${arches[$index]}"
-            docker buildx imagetools create --prefer-index=false --tag "$architecture_tag" "$source_ref"
-            observed_arch_digest="$(docker buildx imagetools inspect "$architecture_tag" | sed -n 's/^Digest:[[:space:]]*//p' | head -n 1)"
+            python3 tests/functional/releasectl.py registry-command -- \
+              docker buildx imagetools create --prefer-index=false --tag "$architecture_tag" "$source_ref"
+            observed_arch_digest="$(python3 tests/functional/releasectl.py registry-digest \
+              --reference "$architecture_tag" \
+              --expected-digest "$expected_digest")"
             if [ "$observed_arch_digest" != "$expected_digest" ]; then
               echo "$architecture_tag resolved to $observed_arch_digest instead of $expected_digest" >&2
               exit 1
@@ -474,8 +498,11 @@ jobs:
             echo "Promoted $architecture_tag to $observed_arch_digest"
           done
 
-          docker buildx imagetools create --tag "$PRIMARY_TAG" "$IMAGE_REF@$INDEX_DIGEST"
-          observed_digest="$(docker buildx imagetools inspect "$PRIMARY_TAG" | sed -n 's/^Digest:[[:space:]]*//p' | head -n 1)"
+          python3 tests/functional/releasectl.py registry-command -- \
+            docker buildx imagetools create --tag "$PRIMARY_TAG" "$IMAGE_REF@$INDEX_DIGEST"
+          observed_digest="$(python3 tests/functional/releasectl.py registry-digest \
+            --reference "$PRIMARY_TAG" \
+            --expected-digest "$INDEX_DIGEST")"
           if [ "$observed_digest" != "$INDEX_DIGEST" ]; then
             echo "Stable tag resolved to $observed_digest instead of $INDEX_DIGEST" >&2
             exit 1

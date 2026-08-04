@@ -8,6 +8,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import time
 
 
 SCHEMA_VERSION = 1
@@ -33,6 +34,11 @@ COMMON_RELEASE_PATHS = {
 COMMON_RELEASE_PREFIXES = (
     "tests/functional/harness/",
 )
+DEFAULT_REGISTRY_ATTEMPTS = 5
+MAX_REGISTRY_ATTEMPTS = 10
+REGISTRY_RETRY_DELAY_SECONDS = 15
+REGISTRY_METADATA_TIMEOUT_SECONDS = 60
+REGISTRY_TRANSFER_TIMEOUT_SECONDS = 300
 
 
 class ReleaseArchiveError(ValueError):
@@ -52,6 +58,273 @@ def require_exact_keys(value, expected, context):
         actual == expected,
         f"{context} keys must be exactly {', '.join(sorted(expected))}",
     )
+
+
+def write_process_output(output, stream):
+    if output:
+        stream.write(output)
+        stream.flush()
+
+
+def validate_registry_attempts(attempts):
+    require(
+        isinstance(attempts, int)
+        and 1 <= attempts <= MAX_REGISTRY_ATTEMPTS,
+        f"registry attempts must be between 1 and {MAX_REGISTRY_ATTEMPTS}",
+    )
+
+
+def text_output(value):
+    if not value:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
+def redact_input(output, input_text):
+    if not input_text:
+        return output
+    secrets = {input_text, input_text.rstrip("\r\n")}
+    for secret in sorted(secrets, key=len, reverse=True):
+        if secret:
+            output = output.replace(secret, "***")
+    return output
+
+
+def registry_retry(
+    command,
+    operation,
+    attempts,
+    *,
+    timeout_seconds=REGISTRY_METADATA_TIMEOUT_SECONDS,
+    input_text=None,
+    validator=None,
+):
+    """Run an idempotent registry operation with bounded linear backoff."""
+    validate_registry_attempts(attempts)
+    require(command, "registry command must not be empty")
+    require(
+        isinstance(timeout_seconds, int) and timeout_seconds > 0,
+        "registry command timeout must be a positive integer",
+    )
+
+    for attempt in range(1, attempts + 1):
+        try:
+            completed = subprocess.run(
+                command,
+                input=input_text,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            stdout = text_output(error.stdout)
+            stderr = text_output(error.stderr)
+            failure = f"timed out after {timeout_seconds}s"
+        else:
+            stdout = completed.stdout or ""
+            stderr = getattr(completed, "stderr", "") or ""
+            failure = None
+            validated = stdout
+            if completed.returncode == 0:
+                try:
+                    if validator is not None:
+                        validated = validator(stdout, stderr)
+                except ReleaseArchiveError as error:
+                    failure = str(error)
+                else:
+                    return (
+                        validated,
+                        redact_input(stdout, input_text),
+                        redact_input(stderr, input_text),
+                    )
+            else:
+                failure = f"exit status {completed.returncode}"
+
+        stdout = redact_input(stdout, input_text)
+        stderr = redact_input(stderr, input_text)
+
+        write_process_output(stdout, sys.stderr)
+        write_process_output(stderr, sys.stderr)
+        if attempt == attempts:
+            raise ReleaseArchiveError(
+                f"{operation} failed after {attempts} attempts ({failure})"
+            )
+        delay = attempt * REGISTRY_RETRY_DELAY_SECONDS
+        print(
+            f"{operation} failed on attempt {attempt}/{attempts} ({failure}); "
+            f"retrying in {delay}s",
+            file=sys.stderr,
+        )
+        time.sleep(delay)
+
+    raise AssertionError("unreachable registry retry state")
+
+
+def registry_reference(value, context):
+    require(isinstance(value, str) and value, f"{context} must not be empty")
+    require(not value.startswith("-"), f"{context} must not start with a dash")
+    require(not re.search(r"\s", value), f"{context} must not contain whitespace")
+    return value
+
+
+def registry_digest_from_push(stdout, stderr=""):
+    digests = re.findall(
+        r"\bdigest:\s*(sha256:[0-9a-f]{64})\b", stdout + "\n" + stderr
+    )
+    require(digests, "registry push did not report an immutable digest")
+    unique_digests = set(digests)
+    require(
+        len(unique_digests) == 1,
+        "registry push reported conflicting immutable digests",
+    )
+    return digests[0]
+
+
+def registry_digest_from_inspect(stdout, expected_digest=None):
+    digests = re.findall(r"(?m)^Digest:\s*(sha256:[0-9a-f]{64})\s*$", stdout)
+    require(len(digests) == 1, "registry inspect did not report exactly one digest")
+    if expected_digest is not None:
+        require(
+            digests[0] == expected_digest,
+            f"registry inspect resolved {digests[0]} instead of {expected_digest}",
+        )
+    return digests[0]
+
+
+def registry_json_from_inspect(stdout):
+    try:
+        document = json.loads(stdout)
+    except json.JSONDecodeError as error:
+        raise ReleaseArchiveError(f"registry inspect returned invalid JSON: {error}") from error
+    require(isinstance(document, dict), "registry inspect JSON must be an object")
+    return stdout
+
+
+def command_registry_login(arguments):
+    registry = registry_reference(arguments.registry, "registry")
+    username = registry_reference(arguments.username, "registry username")
+    password = sys.stdin.read()
+    require(password, "registry password must not be empty")
+    registry_retry(
+        [
+            "docker",
+            "login",
+            registry,
+            "--username",
+            username,
+            "--password-stdin",
+        ],
+        f"registry login to {registry}",
+        arguments.attempts,
+        input_text=password,
+    )
+    print(f"Authenticated to {registry}")
+
+
+def command_registry_push(arguments):
+    reference = registry_reference(arguments.reference, "push reference")
+    digest, stdout, stderr = registry_retry(
+        ["docker", "push", reference],
+        f"registry push of {reference}",
+        arguments.attempts,
+        timeout_seconds=REGISTRY_TRANSFER_TIMEOUT_SECONDS,
+        validator=registry_digest_from_push,
+    )
+    inspected_digest, inspect_stdout, inspect_stderr = registry_retry(
+        ["docker", "buildx", "imagetools", "inspect", reference],
+        f"registry digest inspection of pushed {reference}",
+        arguments.attempts,
+        validator=lambda value, _error: registry_digest_from_inspect(
+            value, digest
+        ),
+    )
+    require(inspected_digest == digest, "pushed registry digest verification failed")
+    write_process_output(stdout, sys.stderr)
+    write_process_output(stderr, sys.stderr)
+    write_process_output(inspect_stdout, sys.stderr)
+    write_process_output(inspect_stderr, sys.stderr)
+    print(digest)
+
+
+def command_registry_digest(arguments):
+    reference = registry_reference(arguments.reference, "inspect reference")
+    expected_digest = arguments.expected_digest
+    if expected_digest is not None:
+        require(
+            SHA256_RE.fullmatch(expected_digest),
+            "expected registry digest is invalid",
+        )
+    digest, stdout, stderr = registry_retry(
+        ["docker", "buildx", "imagetools", "inspect", reference],
+        f"registry digest inspection of {reference}",
+        arguments.attempts,
+        validator=lambda value, _error: registry_digest_from_inspect(
+            value, expected_digest
+        ),
+    )
+    write_process_output(stdout, sys.stderr)
+    write_process_output(stderr, sys.stderr)
+    print(digest)
+
+
+def command_registry_command(arguments):
+    command = list(arguments.registry_command)
+    if command and command[0] == "--":
+        command.pop(0)
+    allowed_prefixes = (
+        ("docker", "pull"),
+        ("docker", "buildx", "imagetools", "create"),
+        ("docker", "buildx", "imagetools", "inspect"),
+    )
+    require(
+        any(tuple(command[: len(prefix)]) == prefix for prefix in allowed_prefixes),
+        "registry-command only permits docker pull or buildx imagetools create/inspect",
+    )
+    is_create = tuple(command[:4]) == (
+        "docker",
+        "buildx",
+        "imagetools",
+        "create",
+    )
+    require(
+        not is_create
+        or not any(
+            argument == "--append" or argument.startswith("--append=")
+            for argument in command[4:]
+        ),
+        "registry-command does not permit non-idempotent imagetools create --append",
+    )
+    is_pull = tuple(command[:2]) == ("docker", "pull")
+    is_raw_inspect = (
+        tuple(command[:4]) == ("docker", "buildx", "imagetools", "inspect")
+        and "--raw" in command[4:]
+    )
+    require(
+        tuple(command[:4]) != ("docker", "buildx", "imagetools", "inspect")
+        or is_raw_inspect,
+        "registry-command permits imagetools inspect only with --raw",
+    )
+    stdout, _, stderr = registry_retry(
+        command,
+        "docker registry command",
+        arguments.attempts,
+        timeout_seconds=(
+            REGISTRY_TRANSFER_TIMEOUT_SECONDS
+            if is_pull
+            else REGISTRY_METADATA_TIMEOUT_SECONDS
+        ),
+        validator=(
+            (lambda value, _error: registry_json_from_inspect(value))
+            if is_raw_inspect
+            else None
+        ),
+    )
+    write_process_output(stdout, sys.stdout)
+    write_process_output(stderr, sys.stderr)
 
 
 def sha256_file(path):
@@ -610,6 +883,44 @@ def parser():
     guard.add_argument("--image-name", required=True)
     guard.add_argument("--changed-files", required=True)
     guard.set_defaults(handler=command_guard_current)
+
+    registry_login = commands.add_parser(
+        "registry-login", help="Log in to a registry with bounded retries"
+    )
+    registry_login.add_argument("--registry", required=True)
+    registry_login.add_argument("--username", required=True)
+    registry_login.add_argument(
+        "--attempts", type=int, default=DEFAULT_REGISTRY_ATTEMPTS
+    )
+    registry_login.set_defaults(handler=command_registry_login)
+
+    registry_push = commands.add_parser(
+        "registry-push", help="Push an image and return its immutable digest"
+    )
+    registry_push.add_argument("--reference", required=True)
+    registry_push.add_argument(
+        "--attempts", type=int, default=DEFAULT_REGISTRY_ATTEMPTS
+    )
+    registry_push.set_defaults(handler=command_registry_push)
+
+    registry_digest = commands.add_parser(
+        "registry-digest", help="Inspect and return an immutable registry digest"
+    )
+    registry_digest.add_argument("--reference", required=True)
+    registry_digest.add_argument("--expected-digest")
+    registry_digest.add_argument(
+        "--attempts", type=int, default=DEFAULT_REGISTRY_ATTEMPTS
+    )
+    registry_digest.set_defaults(handler=command_registry_digest)
+
+    registry_command = commands.add_parser(
+        "registry-command", help="Run an allowlisted registry command with retries"
+    )
+    registry_command.add_argument(
+        "--attempts", type=int, default=DEFAULT_REGISTRY_ATTEMPTS
+    )
+    registry_command.add_argument("registry_command", nargs=argparse.REMAINDER)
+    registry_command.set_defaults(handler=command_registry_command)
     return root
 
 

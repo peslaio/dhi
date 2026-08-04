@@ -954,6 +954,235 @@ class ReleaseArchiveTests(unittest.TestCase):
                 releasectl.command_create(arguments)
         run.assert_not_called()
 
+    def test_registry_push_retries_and_returns_only_validated_digest(self):
+        digest = "sha256:" + ("d" * 64)
+        outcomes = [
+            subprocess.TimeoutExpired(
+                ["docker", "push"],
+                releasectl.REGISTRY_TRANSFER_TIMEOUT_SECONDS,
+                output=b"network stalled\n",
+            ),
+            types.SimpleNamespace(
+                returncode=0,
+                stdout=f"candidate: digest: {digest} size: 1234\n",
+            ),
+            types.SimpleNamespace(
+                returncode=0,
+                stdout=f"Name: candidate\nDigest: {digest}\n",
+            ),
+        ]
+        arguments = types.SimpleNamespace(
+            reference="ghcr.io/peslaio/redis:candidate", attempts=2
+        )
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with mock.patch.object(
+            releasectl.subprocess, "run", side_effect=outcomes
+        ) as run, mock.patch.object(
+            releasectl.time, "sleep"
+        ) as sleep, mock.patch.object(
+            releasectl.sys, "stdout", new=stdout
+        ), mock.patch.object(
+            releasectl.sys, "stderr", new=stderr
+        ):
+            releasectl.command_registry_push(arguments)
+
+        self.assertEqual(run.call_count, 3)
+        sleep.assert_called_once_with(15)
+        self.assertEqual(
+            [call.kwargs["timeout"] for call in run.call_args_list],
+            [300, 300, 60],
+        )
+        self.assertEqual(stdout.getvalue(), f"{digest}\n")
+        self.assertIn("network stalled", stderr.getvalue())
+        self.assertIn("timed out after 300s", stderr.getvalue())
+        self.assertIn("retrying in 15s", stderr.getvalue())
+
+    def test_registry_login_retries_without_disclosing_password(self):
+        password = "registry-secret-value"
+        outcomes = [
+            types.SimpleNamespace(
+                returncode=1,
+                stdout=f"temporary denial for {password}\n",
+                stderr=f"credential={password}\n",
+            ),
+            types.SimpleNamespace(
+                returncode=0,
+                stdout="Login Succeeded\n",
+                stderr=f"ignored echo {password}\n",
+            ),
+        ]
+        arguments = types.SimpleNamespace(
+            registry="ghcr.io", username="github-user", attempts=2
+        )
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with mock.patch.object(
+            releasectl.subprocess, "run", side_effect=outcomes
+        ) as run, mock.patch.object(
+            releasectl.time, "sleep"
+        ), mock.patch.object(
+            releasectl.sys, "stdin", new=io.StringIO(password)
+        ), mock.patch.object(
+            releasectl.sys, "stdout", new=stdout
+        ), mock.patch.object(
+            releasectl.sys, "stderr", new=stderr
+        ):
+            releasectl.command_registry_login(arguments)
+
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(
+            [call.kwargs["timeout"] for call in run.call_args_list],
+            [60, 60],
+        )
+        for call in run.call_args_list:
+            self.assertEqual(call.kwargs["input"], password)
+            self.assertNotIn(password, call.args[0])
+        combined_output = stdout.getvalue() + stderr.getvalue()
+        self.assertNotIn(password, combined_output)
+        self.assertGreaterEqual(combined_output.count("***"), 2)
+        self.assertNotIn("ignored echo", combined_output)
+        self.assertNotIn("Login Succeeded", combined_output)
+        self.assertIn("Authenticated to ghcr.io", stdout.getvalue())
+
+    def test_registry_push_rejects_conflicting_digests(self):
+        first = "sha256:" + ("a" * 64)
+        second = "sha256:" + ("b" * 64)
+        with self.assertRaisesRegex(
+            releasectl.ReleaseArchiveError, "conflicting immutable digests"
+        ):
+            releasectl.registry_digest_from_push(
+                f"candidate: digest: {first}\n",
+                f"warning digest: {second}\n",
+            )
+
+    def test_registry_digest_retries_stale_success_until_expected_digest(self):
+        digest = "sha256:" + ("e" * 64)
+        stale_digest = "sha256:" + ("f" * 64)
+        outcomes = [
+            types.SimpleNamespace(
+                returncode=0,
+                stdout=f"Name: candidate\nDigest: {stale_digest}\n",
+            ),
+            types.SimpleNamespace(
+                returncode=0,
+                stdout=f"Name: candidate\nDigest: {digest}\n",
+            ),
+        ]
+        arguments = types.SimpleNamespace(
+            reference="ghcr.io/peslaio/redis:candidate",
+            expected_digest=digest,
+            attempts=2,
+        )
+        stdout = io.StringIO()
+        with mock.patch.object(
+            releasectl.subprocess, "run", side_effect=outcomes
+        ), mock.patch.object(
+            releasectl.time, "sleep"
+        ) as sleep, mock.patch.object(
+            releasectl.sys, "stdout", new=stdout
+        ), mock.patch.object(
+            releasectl.sys, "stderr", new=io.StringIO()
+        ):
+            releasectl.command_registry_digest(arguments)
+
+        sleep.assert_called_once_with(15)
+        self.assertEqual(stdout.getvalue(), f"{digest}\n")
+
+    def test_registry_raw_inspect_retries_malformed_json(self):
+        outcomes = [
+            types.SimpleNamespace(returncode=0, stdout="{"),
+            types.SimpleNamespace(
+                returncode=0,
+                stdout='{"schemaVersion":2,"manifests":[]}\n',
+                stderr="buildx warning\n",
+            ),
+        ]
+        arguments = types.SimpleNamespace(
+            registry_command=[
+                "--",
+                "docker",
+                "buildx",
+                "imagetools",
+                "inspect",
+                "ghcr.io/peslaio/redis:candidate",
+                "--raw",
+            ],
+            attempts=2,
+        )
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with mock.patch.object(
+            releasectl.subprocess, "run", side_effect=outcomes
+        ), mock.patch.object(
+            releasectl.time, "sleep"
+        ) as sleep, mock.patch.object(
+            releasectl.sys, "stdout", new=stdout
+        ), mock.patch.object(
+            releasectl.sys, "stderr", new=stderr
+        ):
+            releasectl.command_registry_command(arguments)
+
+        sleep.assert_called_once_with(15)
+        self.assertEqual(
+            stdout.getvalue(), '{"schemaVersion":2,"manifests":[]}\n'
+        )
+        self.assertEqual(stderr.getvalue().splitlines()[-1], "buildx warning")
+
+    def test_registry_command_rejects_unsafe_operations(self):
+        cases = {
+            "non-allowlisted command": (
+                ["--", "docker", "image", "rm", "candidate"],
+                "only permits",
+            ),
+            "non-idempotent append": (
+                [
+                    "--",
+                    "docker",
+                    "buildx",
+                    "imagetools",
+                    "create",
+                    "--append",
+                    "ghcr.io/peslaio/redis:candidate",
+                ],
+                "non-idempotent",
+            ),
+            "non-idempotent append value": (
+                [
+                    "--",
+                    "docker",
+                    "buildx",
+                    "imagetools",
+                    "create",
+                    "--append=true",
+                    "ghcr.io/peslaio/redis:candidate",
+                ],
+                "non-idempotent",
+            ),
+        }
+        for name, (command, message) in cases.items():
+            with self.subTest(name=name), self.assertRaisesRegex(
+                releasectl.ReleaseArchiveError, message
+            ):
+                releasectl.command_registry_command(
+                    types.SimpleNamespace(
+                        registry_command=command,
+                        attempts=1,
+                    )
+                )
+
+    def test_registry_retry_attempt_count_is_bounded(self):
+        for attempts in (0, 11):
+            with self.subTest(attempts=attempts), self.assertRaisesRegex(
+                releasectl.ReleaseArchiveError, "between 1 and 10"
+            ), mock.patch.object(releasectl.subprocess, "run") as run:
+                releasectl.registry_retry(
+                    ["docker", "pull", "ghcr.io/peslaio/redis:candidate"],
+                    "test pull",
+                    attempts,
+                )
+            run.assert_not_called()
+
     def published_records(self):
         records = {}
         for arch, marker in (("amd64", "d"), ("arm64", "e")):
@@ -1653,7 +1882,6 @@ end
             "actions/upload-artifact": (6, 0, 0),
             "anchore/sbom-action": (0, 24, 0),
             "azure/setup-helm": (5, 0, 0),
-            "docker/login-action": (4, 0, 0),
         }
         audited_composite_actions = {
             "aquasecurity/trivy-action",
@@ -1751,6 +1979,9 @@ end
         self.assertIn(
             "candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}", candidate
         )
+        self.assertIn("releasectl.py registry-login", candidate)
+        self.assertIn("releasectl.py registry-push", candidate)
+        self.assertNotIn("docker/login-action", candidate)
         self.assertNotIn("tests/functional/run.sh", candidate)
         self.assertIn(
             "needs: [prepare, publish-candidate-architecture]",
@@ -1790,6 +2021,10 @@ end
             "candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}",
             index_candidate,
         )
+        self.assertIn("releasectl.py registry-login", index_candidate)
+        self.assertIn("releasectl.py registry-command", index_candidate)
+        self.assertIn("releasectl.py registry-digest", index_candidate)
+        self.assertNotIn("docker/login-action", manifest)
         self.assertIn(
             "needs: [prepare-platform-matrix, publish-candidate]",
             index_acceptance,
@@ -1802,6 +2037,7 @@ end
             "Download accepted native architecture digest", index_acceptance
         )
         self.assertIn("releasectl.py verify-index", index_acceptance)
+        self.assertIn('--expected-digest "$INDEX_DIGEST"', index_acceptance)
         self.assertIn(
             'if [ "$observed_index_digest" != "$INDEX_DIGEST" ]',
             index_acceptance,
@@ -1848,6 +2084,42 @@ end
             'if [ "$observed_digest" != "$INDEX_DIGEST" ]',
             index_promotion,
         )
+        self.assertGreaterEqual(index_promotion.count("--expected-digest"), 2)
+
+    def test_every_release_registry_boundary_uses_the_retry_controller(self):
+        workflow_dir = (
+            pathlib.Path(__file__).resolve().parents[2]
+            / ".github"
+            / "workflows"
+        )
+        architecture_publisher = (
+            workflow_dir / "reusable-publish-tested-image.yml"
+        ).read_text(encoding="utf-8")
+        manifest_publisher = (
+            workflow_dir / "reusable-publish-image-manifest.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertEqual(
+            architecture_publisher.count("releasectl.py registry-login"), 2
+        )
+        self.assertEqual(
+            architecture_publisher.count("releasectl.py registry-push"), 1
+        )
+        self.assertEqual(
+            architecture_publisher.count("releasectl.py registry-command"), 1
+        )
+        self.assertEqual(
+            manifest_publisher.count("releasectl.py registry-login"), 3
+        )
+        self.assertEqual(
+            manifest_publisher.count("releasectl.py registry-command"), 5
+        )
+        self.assertEqual(
+            manifest_publisher.count("releasectl.py registry-digest"), 4
+        )
+        for workflow in (architecture_publisher, manifest_publisher):
+            self.assertNotIn("docker/login-action", workflow)
+            self.assertNotRegex(workflow, r"(?m)^\s+docker push ")
 
     def test_write_permissions_and_operations_are_confined_to_release_graph(self):
         root = pathlib.Path(__file__).resolve().parents[2]
@@ -1878,7 +2150,8 @@ end
                 self.assertNotIn("packages: write", content)
 
         write_operations = (
-            "docker/login-action@",
+            "releasectl.py registry-login",
+            "releasectl.py registry-push",
             "docker push ",
             "cosign sign ",
             "docker buildx imagetools create ",

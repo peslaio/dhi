@@ -127,11 +127,16 @@ jobs:
           fi
 
       - name: Log in to registry
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ inputs.registry }}
-          username: ${{ secrets.registry_username || github.actor }}
-          password: ${{ secrets.registry_password || github.token }}
+        env:
+          REGISTRY: ${{ inputs.registry }}
+          REGISTRY_USERNAME: ${{ secrets.registry_username || github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.registry_password || github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$REGISTRY_PASSWORD" \
+            | python3 tests/functional/releasectl.py registry-login \
+                --registry "$REGISTRY" \
+                --username "$REGISTRY_USERNAME"
 
       - name: Push run-scoped candidate architecture image
         id: publish
@@ -145,9 +150,8 @@ jobs:
           set -euo pipefail
           candidate_tag="${IMAGE_REF}:candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${IMAGE_VERSION}-${DEBIAN_SUITE}-${DEBIAN_ARCH}"
           docker image tag "$ARCH_TAG" "$candidate_tag"
-          push_output="$(docker push "$candidate_tag" 2>&1)"
-          printf '%s\n' "$push_output"
-          digest="$(printf '%s\n' "$push_output" | sed -n 's/.*digest: \(sha256:[0-9a-f]\+\).*/\1/p' | tail -n 1)"
+          digest="$(python3 tests/functional/releasectl.py registry-push \
+            --reference "$candidate_tag")"
           if ! printf '%s\n' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
             echo "Registry push did not report a valid immutable digest for $candidate_tag" >&2
             exit 1
@@ -263,11 +267,16 @@ jobs:
             --run-attempt "$GITHUB_RUN_ATTEMPT"
 
       - name: Log in to registry for candidate pull
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ inputs.registry }}
-          username: ${{ secrets.registry_username || github.actor }}
-          password: ${{ secrets.registry_password || github.token }}
+        env:
+          REGISTRY: ${{ inputs.registry }}
+          REGISTRY_USERNAME: ${{ secrets.registry_username || github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.registry_password || github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$REGISTRY_PASSWORD" \
+            | python3 tests/functional/releasectl.py registry-login \
+                --registry "$REGISTRY" \
+                --username "$REGISTRY_USERNAME"
 
       - name: Install cosign
         if: inputs.sign
@@ -319,7 +328,8 @@ jobs:
             echo "Expected exactly one candidate architecture reference" >&2
             exit 1
           fi
-          docker pull --platform "${{ matrix.platform }}" "$source_ref"
+          python3 tests/functional/releasectl.py registry-command -- \
+            docker pull --platform "${{ matrix.platform }}" "$source_ref"
           tests/functional/run.sh \
             "${{ inputs.image_name }}" \
             "$source_ref" \

@@ -8,7 +8,7 @@ This scorecard judges whether the images provide a production-relevant improveme
 
 **Portfolio score: 59/100 - candidate, not production-ready as a distribution.**
 
-All seven runtime-closure images are credible hardened-image candidates. For commit [`ea1d711`](https://github.com/peslaio/dhi/commit/ea1d7112b4cfc7dbced95bf6020ebb35a6a13e86), every configured release workflow completed successfully: 35 native build legs produced bound Trivy reports, exercised the declared application contracts, exported the tested images, and published signed architecture images; the resulting 20 version/suite manifests were also published and signed. The closure cohort removes substantial runtime content, uses an exact non-root identity, rejects package drift, and has application-level tests. It can provide value in a controlled production pilot when consumers pin a digest, verify signatures, and provide secure configuration.
+All seven runtime-closure images are credible hardened-image candidates. For commit [`0e62730`](https://github.com/peslaio/dhi/commit/0e627306a2f9c7ee018ad5b31fb4fd1079e5421d), every configured release workflow completed successfully: 35 native build legs produced bound Trivy reports, exercised the declared application contracts, exported the tested images, and published signed architecture images; the resulting 20 version/suite manifests were also published and signed. The closure cohort removes substantial runtime content, uses an exact non-root identity, rejects package drift, and has application-level tests. It can provide value in a controlled production pilot when consumers pin a digest, verify signatures, and provide secure configuration.
 
 The full-rootfs images are not at the same maturity. Several offer fewer packages than their selected upstream image, but MariaDB, PostgreSQL, MongoDB, and RabbitMQ lack the mature initialization and lifecycle behavior of their official images. RabbitMQ and .NET currently have more package records than the selected upstream comparison. The portfolio therefore should not be advertised as a drop-in production replacement.
 
@@ -18,7 +18,7 @@ The full-rootfs images are not at the same maturity. Several offer fewer package
 | --- | ---: | ---: | --- |
 | Runtime minimization | 20 | 11 | Seven closure images have exact allowlists and very small root filesystems; nine families retain full minbase dependency trees. |
 | Least privilege and runtime hardening | 15 | 12 | Numeric non-root identity is checked; APT tools, setuid/setgid bits, and file capabilities are removed; closure images can remove shells. Full-rootfs images retain broader tooling and users can override OCI metadata. |
-| Functional correctness | 20 | 14 | Every declared native leg passed its application contract at `ea1d711`, including the PHP FastCGI path and RabbitMQ queue roundtrip. Service lifecycle, persistence, authentication, TLS, upgrade, and failure coverage remain shallow. |
+| Functional correctness | 20 | 14 | Every declared native leg passed its application contract at `0e62730`, including the PHP FastCGI path and RabbitMQ queue roundtrip. Service lifecycle, persistence, authentication, TLS, upgrade, and failure coverage remain shallow. |
 | Supply chain and reproducibility | 20 | 9 | SBOM, keyless cosign, immutable-digest manifest sources, and bound fail-closed Trivy JSON coverage are proven. Inputs and action tags remain mutable, third-party key fingerprints are not checked, SBOMs and scan reports are not OCI-attached, and provenance is absent. |
 | Platform and release assurance | 15 | 10 | All 16 release workflows proved native builds, tested-image archive handoff, immutable architecture digest records, architecture signing, and signed manifests. Final native-platform pulls of the published registry objects are still missing. |
 | Maintenance and usability | 10 | 3 | Per-image workflows and package docs are clear. There is no lifecycle automation, rebuild SLA, compatibility policy, or support commitment; some defaults are EOL. |
@@ -96,7 +96,7 @@ For `node` and `python`, package counts are lower than upstream, but the full-ro
 
 Kimi K3 was used through Moonshot AI's official API as an independent reviewer. It scored the pre-test baseline **38/100** and the then-current post-change evidence **48/100**. At the time of that review, it agreed that the Compose architecture was appropriate but reduced credit because PHP and RabbitMQ did not yet have green native CI and because the static gates lacked deliberate failure tests.
 
-The later `ea1d711` release closed those specific PHP and RabbitMQ evidence gaps and proved bound, fail-closed Trivy coverage. The maintained score of 59/100 incorporates that later evidence; Kimi was not rerun, so its 48/100 remains a historical independent opinion rather than a current comparison or security certification. The no-go decision for the full-rootfs cohort is unchanged.
+The later `0e62730` release closed those specific PHP and RabbitMQ evidence gaps and proved bound, fail-closed Trivy coverage. The maintained score of 59/100 incorporates that later evidence; Kimi was not rerun, so its 48/100 remains a historical independent opinion rather than a current comparison or security certification. The no-go decision for the full-rootfs cohort is unchanged.
 
 ## Promotion Requirements
 
@@ -110,7 +110,7 @@ Before calling any family production-supported:
 6. Add persistence, restart, authenticated/TLS, upgrade, and backup/restore tests where relevant.
 7. Demonstrate a material footprint or operational advantage over the selected upstream image.
 
-Release `ea1d711` satisfies requirement 1 for the current image changes. Every later promoted rebuild must satisfy it again.
+Release `0e62730` satisfies requirement 1 for the current image changes. Every later promoted rebuild must satisfy it again.
 
 Until those conditions are met, use the terms `experimental`, `candidate`, or `restricted pilot`, not `production-ready DHI`.
 

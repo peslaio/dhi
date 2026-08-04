@@ -10,6 +10,9 @@ services:
         DOTNET_SDK_IMAGE: ${DHI_FIXTURE_DOTNET_SDK_IMAGE:?set DHI_FIXTURE_DOTNET_SDK_IMAGE}
     pull_policy: never
     platform: ${DHI_PLATFORM:?set DHI_PLATFORM}
+    environment:
+      DHI_CONFIG_PATH: /app/appsettings.json
+      DHI_APP_MODE: environment
     labels:
       io.pesla.dhi.functional.role: sut
       io.pesla.dhi.functional.identity-mode: derived-rootfs-prefix
@@ -26,7 +29,7 @@ services:
     pull_policy: never
     labels:
       io.pesla.dhi.functional.role: test
-    command: [http, --url, http://app:8080/, --contains, dotnet-runtime-app-ok, --timeout, "120"]
+    command: [http, --url, http://app:8080/, --contains, dotnet-runtime-app-ok, --checks, "config-precedence,json,filesystem-tmp,dns,crypto,compression,encoding-timezone,worker-threads,reflection,native-libc,local-http", --timeout, "120"]
     depends_on: [app]
     read_only: true
     tmpfs: [/tmp]

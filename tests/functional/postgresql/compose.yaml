@@ -19,6 +19,8 @@ services:
     read_only: true
     volumes:
       - data:/var/lib/postgresql
+      - ./secrets/superuser-password.txt:/run/secrets/postgresql-superuser-password:ro
+      - ./secrets/app-password.txt:/run/secrets/postgresql-app-password:ro
     tmpfs:
       - /run/postgresql:uid=10001,gid=0,mode=0770
       - /var/log/postgresql:uid=10001,gid=0,mode=0770
@@ -31,6 +33,8 @@ services:
       io.pesla.dhi.functional.role: test
     depends_on: [app]
     read_only: true
+    volumes:
+      - ./secrets/app-password.txt:/run/secrets/postgresql-app-password:ro
     tmpfs: [/tmp]
 
 volumes:

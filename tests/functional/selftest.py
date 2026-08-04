@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Fast, daemon-free negative tests for the functional contract control plane."""
 
+import argparse
 import copy
 import io
 import json
@@ -8,11 +9,13 @@ import pathlib
 import re
 import subprocess
 import tempfile
+import time
 import types
 import unittest
 from unittest import mock
 
 import fixturectl
+import lifecyclectl
 import releasectl
 import result as contract_result
 import scan_result
@@ -93,7 +96,7 @@ def passing_result():
                 "containerName": "/dhi-selftest-app-1",
                 "image": "local/redis:test",
                 "imageId": IMAGE_ID,
-                "state": "exited",
+                "state": "running",
                 "health": None,
                 "exitCode": 0,
                 "oomKilled": False,
@@ -171,7 +174,7 @@ def create_evidence(root):
         "Id": "sut-container",
         "Name": "/dhi-selftest-app-1",
         "Image": IMAGE_ID,
-        "State": {"Status": "exited", "ExitCode": 0, "OOMKilled": False},
+        "State": {"Status": "running", "ExitCode": 0, "OOMKilled": False},
     }
     test_inspect = {
         "Id": "test-container",
@@ -191,7 +194,7 @@ def create_evidence(root):
             "ID": "sut-container",
             "Name": "dhi-selftest-app-1",
             "Image": "local/redis:test",
-            "State": "exited",
+            "State": "running",
             "ExitCode": 0,
         },
         {
@@ -244,6 +247,86 @@ def create_evidence(root):
         ),
         encoding="utf-8",
     )
+    assertion_contract = {
+        "schemaVersion": 1,
+        "family": "redis",
+        "suite": "redis",
+        "requiredAssertions": ["redis.ready"],
+    }
+    assertion_summary = {
+        "assertions": [{"id": "redis.ready", "status": "pass"}],
+        "counts": {"fail": 0, "pass": 1},
+        "outcome": "pass",
+        "schemaVersion": 1,
+        "suite": "redis",
+    }
+    lifecycle_services = [
+        {
+            "name": "app",
+            "containerId": "sut-container",
+            "state": "running",
+            "exitCode": 0,
+            "oomKilled": False,
+        }
+    ]
+    (root / "assertion-contract.json").write_text(
+        json.dumps(assertion_contract), encoding="utf-8"
+    )
+    (root / "lifecycle.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "contract": {
+                    "family": "redis",
+                    "version": "7.0",
+                    "platform": "linux/amd64",
+                    "project": "dhi-selftest",
+                    "sutService": "app",
+                    "testService": "test",
+                },
+                "identity": {
+                    "sourceImageId": IMAGE_ID,
+                    "sutImageId": IMAGE_ID,
+                },
+                "assertionContract": assertion_contract,
+                "phases": {
+                    "initial": {
+                        "startedAt": "2026-08-03T00:00:00Z",
+                        "finishedAt": "2026-08-03T00:00:01Z",
+                        "testContainerId": "test-container",
+                        "testExitCode": 0,
+                        "sutContainerId": "sut-container",
+                        "sutState": "running",
+                        "assertions": assertion_summary,
+                        "services": lifecycle_services,
+                    },
+                    "shutdown": {
+                        "signal": "SIGTERM",
+                        "startedAt": "2026-08-03T00:00:01Z",
+                        "finishedAt": "2026-08-03T00:00:02Z",
+                        "durationMs": 1000,
+                        "sutExitCode": 0,
+                        "sutState": "exited",
+                        "oomKilled": False,
+                    },
+                    "restart": {
+                        "startedAt": "2026-08-03T00:00:02Z",
+                        "finishedAt": "2026-08-03T00:00:03Z",
+                        "durationMs": 1000,
+                        "testExitCode": 0,
+                        "sutContainerId": "sut-container",
+                        "sutState": "running",
+                        "oomKilled": False,
+                        "assertions": assertion_summary,
+                        "services": lifecycle_services,
+                    },
+                },
+                "outcome": {"status": "pass", "message": "passed"},
+                "durationMs": 3000,
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 class ResultContractTests(unittest.TestCase):
@@ -263,6 +346,9 @@ class ResultContractTests(unittest.TestCase):
             "missing run fields": lambda value: value.__setitem__("run", {}),
             "assertion exit": lambda value: value["services"][1].__setitem__(
                 "exitCode", 10
+            ),
+            "SUT exited after restart": lambda value: value["services"][0].__setitem__(
+                "state", "exited"
             ),
             "oom killed": lambda value: value["services"][0].__setitem__(
                 "oomKilled", True
@@ -286,6 +372,24 @@ class ResultContractTests(unittest.TestCase):
                 mutate(value)
                 with self.assertRaises(ValueError):
                     contract_result.validate_result(value, self.root)
+
+        fixture_failure = copy.deepcopy(passing_result())
+        fixture_failure["services"].append(
+            {
+                "name": "backend",
+                "role": "fixture",
+                "containerId": "fixture-container",
+                "containerName": "/dhi-selftest-backend-1",
+                "image": "local/backend:test",
+                "imageId": "sha256:" + ("d" * 64),
+                "state": "exited",
+                "health": None,
+                "exitCode": 1,
+                "oomKilled": False,
+            }
+        )
+        with self.assertRaises(ValueError):
+            contract_result.validate_result(fixture_failure)
 
     def test_schema_and_validator_evidence_keys_match(self):
         schema_path = pathlib.Path(__file__).with_name("result.schema.json")
@@ -317,6 +421,10 @@ class ResultContractTests(unittest.TestCase):
                 self.root / "fixture-validation.json",
                 {"schemaVersion": 1, "fixtures": 6, "online": False, "status": "fail"},
             ),
+            "lifecycle": (
+                self.root / "lifecycle.json",
+                {"schemaVersion": 1, "outcome": {"status": "pass"}},
+            ),
         }
         for name, (path, replacement) in mutations.items():
             with self.subTest(name=name):
@@ -327,6 +435,46 @@ class ResultContractTests(unittest.TestCase):
                         contract_result.validate_result(passing_result(), self.root)
                 finally:
                     path.write_text(original, encoding="utf-8")
+
+    def test_lifecycle_evidence_rejects_unclean_shutdown(self):
+        path = self.root / "lifecycle.json"
+        original = json.loads(path.read_text(encoding="utf-8"))
+        mutations = (
+            ("unexpected exit code", "sutExitCode", 137),
+            ("still running", "sutState", "running"),
+            ("oom killed", "oomKilled", True),
+        )
+        for name, key, value in mutations:
+            with self.subTest(name=name):
+                document = copy.deepcopy(original)
+                document["phases"]["shutdown"][key] = value
+                path.write_text(json.dumps(document), encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    contract_result.validate_result(passing_result(), self.root)
+        path.write_text(json.dumps(original), encoding="utf-8")
+
+    def test_lifecycle_evidence_binds_assertions_and_long_lived_services(self):
+        path = self.root / "lifecycle.json"
+        original = json.loads(path.read_text(encoding="utf-8"))
+        mutations = {
+            "missing assertion": lambda value: value["phases"]["restart"][
+                "assertions"
+            ]["assertions"].clear(),
+            "wrong assertion suite": lambda value: value["phases"]["initial"][
+                "assertions"
+            ].__setitem__("suite", "other"),
+            "fixture stopped": lambda value: value["phases"]["restart"][
+                "services"
+            ][0].__setitem__("state", "exited"),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                document = copy.deepcopy(original)
+                mutate(document)
+                path.write_text(json.dumps(document), encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    contract_result.validate_result(passing_result(), self.root)
+        path.write_text(json.dumps(original), encoding="utf-8")
 
     def test_invalid_pass_evidence_emits_terminal_failure(self):
         identity = passing_result()["image"]["identity"]
@@ -381,6 +529,122 @@ class ResultContractTests(unittest.TestCase):
         self.assertEqual(emitted["outcome"]["exitCode"], 15)
         self.assertTrue(emitted["secondaryFailures"])
         contract_result.validate_result(emitted, self.root)
+
+
+class LifecycleControllerTests(unittest.TestCase):
+    @staticmethod
+    def controller(timeout=60):
+        with tempfile.TemporaryDirectory() as directory:
+            contract_path = pathlib.Path(directory) / "assertions.json"
+            contract_path.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "family": "redis",
+                        "suite": "redis",
+                        "requiredAssertions": ["redis.ready", "redis.get"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            arguments = types.SimpleNamespace(
+                compose_file="compose.yaml",
+                project="selftest",
+                family="redis",
+                version="7.0",
+                platform="linux/amd64",
+                sut_service="app",
+                test_service="test",
+                source_image_id=IMAGE_ID,
+                sut_image_id=IMAGE_ID,
+                assertion_contract=contract_path,
+                timeout=timeout,
+            )
+            return lifecyclectl.Controller(arguments)
+
+    def test_allowed_exit_codes_are_strict_and_canonical(self):
+        self.assertEqual(lifecyclectl.parse_exit_codes("143,0,143"), [0, 143])
+        for invalid in ("", "-1", "256", "zero", "0,"):
+            with self.subTest(invalid=invalid):
+                    with self.assertRaises(argparse.ArgumentTypeError):
+                        lifecyclectl.parse_exit_codes(invalid)
+
+    def test_assertion_summary_requires_the_exact_family_contract(self):
+        assertion_contract = {
+            "schemaVersion": 1,
+            "family": "redis",
+            "suite": "redis",
+            "requiredAssertions": ["redis.ready", "redis.get"],
+        }
+        summary = {
+            "assertions": [
+                {"id": "redis.ready", "status": "pass"},
+                {"id": "redis.get", "status": "pass"},
+            ],
+            "counts": {"fail": 0, "pass": 2},
+            "outcome": "pass",
+            "schemaVersion": 1,
+            "suite": "redis",
+        }
+        output = "DHI_ASSERTION_SUMMARY " + json.dumps(summary)
+        self.assertEqual(
+            lifecyclectl.parse_assertion_summary(output, assertion_contract, "initial"),
+            summary,
+        )
+        for name, mutate in {
+            "missing": lambda value: value["assertions"].pop(),
+            "unexpected": lambda value: value["assertions"].append(
+                {"id": "redis.extra", "status": "pass"}
+            ),
+            "failed": lambda value: value["assertions"][0].__setitem__(
+                "status", "fail"
+            ),
+            "wrong count": lambda value: value["counts"].__setitem__("pass", 1),
+        }.items():
+            with self.subTest(name=name):
+                candidate = copy.deepcopy(summary)
+                mutate(candidate)
+                with self.assertRaises(lifecyclectl.LifecycleError):
+                    lifecyclectl.parse_assertion_summary(
+                        "DHI_ASSERTION_SUMMARY " + json.dumps(candidate),
+                        assertion_contract,
+                        "initial",
+                    )
+        with self.assertRaises(lifecyclectl.LifecycleError):
+            lifecyclectl.parse_assertion_summary("verifier passed", assertion_contract, "initial")
+
+    def test_global_deadline_and_command_timeout_are_distinct(self):
+        controller = self.controller()
+        controller.deadline = time.monotonic() - 1
+        with self.assertRaises(lifecyclectl.LifecycleError) as expired:
+            controller.remaining()
+        self.assertEqual(expired.exception.exit_code, lifecyclectl.EXIT_TIMEOUT)
+
+        controller.deadline = time.monotonic() + 100
+        with mock.patch.object(
+            lifecyclectl.subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired(["docker"], 1),
+        ), self.assertRaises(lifecyclectl.LifecycleError) as bounded:
+            controller.run(["docker"], maximum=1)
+        self.assertEqual(bounded.exception.exit_code, lifecyclectl.EXIT_READINESS)
+
+    def test_outer_watchdog_preserves_controller_timeout_evidence(self):
+        runner = pathlib.Path(__file__).with_name("run.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            "lifecycle_watchdog_seconds=$((timeout_seconds + 30))", runner
+        )
+        self.assertIn(
+            'run_logged "$lifecycle_watchdog_seconds" "$artifact_dir/compose-up.log"',
+            runner,
+        )
+        self.assertIn('--timeout "$timeout_seconds"', runner)
+
+    def test_restart_probe_receives_an_explicit_lifecycle_phase(self):
+        controller = pathlib.Path(__file__).with_name("lifecyclectl.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('"DHI_LIFECYCLE_PHASE=restart"', controller)
 
 
 class ScanResultTests(unittest.TestCase):
@@ -755,6 +1019,51 @@ class ReleaseArchiveTests(unittest.TestCase):
                         records, self.manifest_arguments()
                     )
 
+    def test_index_member_must_match_accepted_platform_digest(self):
+        amd64_digest = "sha256:" + ("d" * 64)
+        arm64_digest = "sha256:" + ("e" * 64)
+        document = {
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.index.v1+json",
+            "manifests": [
+                {
+                    "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                    "digest": amd64_digest,
+                    "platform": {"os": "linux", "architecture": "amd64"},
+                },
+                {
+                    "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                    "digest": arm64_digest,
+                    "platform": {"os": "linux", "architecture": "arm64"},
+                },
+            ],
+        }
+        self.assertEqual(
+            releasectl.verify_index_member(document, "linux/arm64", arm64_digest),
+            arm64_digest,
+        )
+
+        mutations = {
+            "wrong digest": lambda value: value["manifests"][1].__setitem__(
+                "digest", "sha256:" + ("f" * 64)
+            ),
+            "missing platform": lambda value: value["manifests"].pop(),
+            "duplicate platform": lambda value: value["manifests"].append(
+                copy.deepcopy(value["manifests"][1])
+            ),
+            "malformed document": lambda value: value.__setitem__(
+                "manifests", "not-an-array"
+            ),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                candidate = copy.deepcopy(document)
+                mutate(candidate)
+                with self.assertRaises(releasectl.ReleaseArchiveError):
+                    releasectl.verify_index_member(
+                        candidate, "linux/arm64", arm64_digest
+                    )
+
     def test_release_freshness_matches_family_and_common_inputs(self):
         selected = {
             ".github/workflows/redis-image.yml",
@@ -762,12 +1071,14 @@ class ReleaseArchiveTests(unittest.TestCase):
             ".github/workflows/reusable-build-debian-image.yml",
             "images/redis/7.0/image.yaml",
             "tests/functional/releasectl.py",
+            "tests/functional/harness/probe.py",
+            "tests/functional/redis/compose.yaml",
         }
         ignored = {
             "README.md",
             ".github/workflows/apache-image.yml",
             "images/apache/2.4/image.yaml",
-            "tests/functional/redis/compose.yaml",
+            "tests/functional/apache/compose.yaml",
         }
         for path in selected:
             with self.subTest(selected=path):
@@ -1038,6 +1349,10 @@ end
         )
         self.assertIn(
             'readlink -f "$path"',
+            build_workflow,
+        )
+        self.assertIn(
+            'sudo cp -a "$rootfs$path/." "$runtime_rootfs$path/"',
             build_workflow,
         )
         self.assertIn("runtime_remove_paths:", build_workflow)
@@ -1416,6 +1731,124 @@ end
                 )
                 self.assertIn("actions/download-artifact#484", step)
 
+    def test_release_promotion_requires_native_candidate_acceptance(self):
+        root = pathlib.Path(__file__).resolve().parents[2]
+        workflow_dir = root / ".github" / "workflows"
+        publisher = (
+            workflow_dir / "reusable-publish-tested-image.yml"
+        ).read_text(encoding="utf-8")
+
+        candidate, architecture_acceptance = publisher.split(
+            "\n  accept-candidate-architecture:\n", 1
+        )
+        architecture_acceptance, accepted_record = (
+            architecture_acceptance.split("\n  record-accepted-architecture:\n", 1)
+        )
+        accepted_record, manifest_call = accepted_record.split(
+            "\n  publish-manifest:\n", 1
+        )
+
+        self.assertIn(
+            "candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}", candidate
+        )
+        self.assertNotIn("tests/functional/run.sh", candidate)
+        self.assertIn(
+            "needs: [prepare, publish-candidate-architecture]",
+            architecture_acceptance,
+        )
+        self.assertIn("packages: read", architecture_acceptance)
+        self.assertNotIn("packages: write", architecture_acceptance)
+        self.assertIn("ubuntu-24.04-arm", architecture_acceptance)
+        self.assertIn('docker pull --platform "${{ matrix.platform }}"', architecture_acceptance)
+        self.assertIn("tests/functional/run.sh", architecture_acceptance)
+        self.assertIn("Verify candidate architecture signature", architecture_acceptance)
+        self.assertIn(
+            "--certificate-oidc-issuer https://token.actions.githubusercontent.com",
+            architecture_acceptance,
+        )
+        self.assertIn("--output json", architecture_acceptance)
+        self.assertIn("max_attempts=5", architecture_acceptance)
+        self.assertIn(
+            "needs: [prepare, accept-candidate-architecture]",
+            accepted_record,
+        )
+        self.assertNotIn("packages: write", accepted_record)
+        self.assertNotIn("docker push", accepted_record)
+        self.assertNotIn("imagetools create", accepted_record)
+        self.assertIn("needs: [prepare, record-accepted-architecture]", manifest_call)
+
+        manifest = (
+            workflow_dir / "reusable-publish-image-manifest.yml"
+        ).read_text(encoding="utf-8")
+        index_candidate, index_acceptance = manifest.split(
+            "\n  accept-candidate-index:\n", 1
+        )
+        index_acceptance, index_promotion = index_acceptance.split(
+            "\n  promote:\n", 1
+        )
+        self.assertIn(
+            "candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}",
+            index_candidate,
+        )
+        self.assertIn(
+            "needs: [prepare-platform-matrix, publish-candidate]",
+            index_acceptance,
+        )
+        self.assertIn("packages: read", index_acceptance)
+        self.assertNotIn("packages: write", index_acceptance)
+        self.assertIn("ubuntu-24.04-arm", index_acceptance)
+        self.assertIn('source_ref="${IMAGE_REF}@${INDEX_DIGEST}"', index_acceptance)
+        self.assertIn(
+            "Download accepted native architecture digest", index_acceptance
+        )
+        self.assertIn("releasectl.py verify-index", index_acceptance)
+        self.assertIn(
+            'if [ "$observed_index_digest" != "$INDEX_DIGEST" ]',
+            index_acceptance,
+        )
+        self.assertIn("tests/functional/run.sh", index_acceptance)
+        self.assertIn("Verify candidate index signature", index_acceptance)
+        self.assertIn(
+            "--certificate-oidc-issuer https://token.actions.githubusercontent.com",
+            index_acceptance,
+        )
+        self.assertIn("--output json", index_acceptance)
+        self.assertIn("max_attempts=5", index_acceptance)
+        self.assertGreaterEqual(index_candidate.count("max_attempts=5"), 1)
+        self.assertIn(
+            "needs: [publish-candidate, accept-candidate-index]",
+            index_promotion,
+        )
+        self.assertIn("actions: read", index_promotion)
+        self.assertIn(
+            "Download accepted architecture digests", index_promotion
+        )
+        self.assertIn(
+            'architecture_tag="${IMAGE_REF}:${{ inputs.image_version }}-'
+            '${{ inputs.debian_suite }}-${arches[$index]}"',
+            index_promotion,
+        )
+        self.assertIn(
+            'docker buildx imagetools create --prefer-index=false '
+            '--tag "$architecture_tag" "$source_ref"',
+            index_promotion,
+        )
+        self.assertLess(
+            index_promotion.index('architecture_tag="${IMAGE_REF}:'),
+            index_promotion.index(
+                'docker buildx imagetools create --tag "$PRIMARY_TAG"'
+            ),
+        )
+        self.assertIn(
+            'docker buildx imagetools create --tag "$PRIMARY_TAG" '
+            '"$IMAGE_REF@$INDEX_DIGEST"',
+            index_promotion,
+        )
+        self.assertIn(
+            'if [ "$observed_digest" != "$INDEX_DIGEST" ]',
+            index_promotion,
+        )
+
     def test_write_permissions_and_operations_are_confined_to_release_graph(self):
         root = pathlib.Path(__file__).resolve().parents[2]
         workflow_dir = root / ".github" / "workflows"
@@ -1537,10 +1970,15 @@ end
                     for line in path_lines.splitlines()
                     if line.strip().startswith("- ")
                 }
-                expected_paths = releasectl.COMMON_RELEASE_PATHS | {
+                common_prefix_paths = {
+                    f"{prefix.rstrip('/')}/**"
+                    for prefix in releasectl.COMMON_RELEASE_PREFIXES
+                }
+                expected_paths = releasectl.COMMON_RELEASE_PATHS | common_prefix_paths | {
                     f".github/workflows/{name}",
                     f".github/workflows/{name.replace('-release.yml', '.yml')}",
                     f"images/{family}/**",
+                    f"tests/functional/{family}/**",
                 }
                 self.assertEqual(release_paths, expected_paths)
                 release_build, release_publish = content.split(

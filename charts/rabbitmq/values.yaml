@@ -11,7 +11,7 @@ updateStrategy:
 
 image:
   registry: ghcr.io
-  repository: tpesla/rabbitmq
+  repository: peslaio/rabbitmq
   tag: 3.10-bookworm
   digest: ""
   pullPolicy: IfNotPresent

@@ -11,7 +11,7 @@ updateStrategy:
 
 image:
   registry: ghcr.io
-  repository: tpesla/postgresql
+  repository: peslaio/postgresql
   tag: 15-bookworm
   digest: ""
   pullPolicy: IfNotPresent

@@ -6,9 +6,12 @@ services:
     labels:
       io.pesla.dhi.functional.role: sut
       io.pesla.dhi.functional.identity-mode: exact-container-image
+    command: [/etc/redis/functional.conf]
+    volumes:
+      - ./redis.conf:/etc/redis/functional.conf:ro
+      - data:/data
     read_only: true
     tmpfs:
-      - /data:uid=10001,gid=0,mode=0770
       - /run/redis:uid=10001,gid=0,mode=0770
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
@@ -21,7 +24,18 @@ services:
     pull_policy: never
     labels:
       io.pesla.dhi.functional.role: test
-    command: [redis, --host, app]
+    environment:
+      DHI_LIFECYCLE_PHASE: initial
+    command:
+      - redis
+      - --host
+      - app
+      - --username
+      - functional
+      - --password
+      - dhi-functional-only-password
+      - --concurrency
+      - "32"
     depends_on: [app]
     read_only: true
     tmpfs: [/tmp]
@@ -31,3 +45,6 @@ services:
 networks:
   default:
     internal: true
+
+volumes:
+  data: {}

@@ -4,3 +4,4 @@ ARG DHI_SOURCE_IMAGE_ID=unknown
 LABEL io.pesla.dhi.functional.source-image-id="${DHI_SOURCE_IMAGE_ID}"
 
 COPY --chown=10001:0 --chmod=0444 index.php /var/www/html/index.php
+COPY --chown=10001:0 src/ /var/www/html/src/

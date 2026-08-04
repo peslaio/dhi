@@ -11,7 +11,7 @@ updateStrategy:
 
 image:
   registry: ghcr.io
-  repository: tpesla/java-jre
+  repository: peslaio/java-jre
   tag: 17-bookworm
   digest: ""
   pullPolicy: IfNotPresent

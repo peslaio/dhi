@@ -29,10 +29,12 @@ services:
     labels:
       io.pesla.dhi.functional.role: fixture
     depends_on: [app]
+    user: "101:101"
     read_only: true
     tmpfs:
-      - /var/cache/nginx
-      - /var/run
+      - /var/cache/nginx:uid=101,gid=101,mode=0750
+      - /var/run:uid=101,gid=101,mode=0750
+    cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
 
   test:
@@ -43,7 +45,16 @@ services:
     pull_policy: never
     labels:
       io.pesla.dhi.functional.role: test
-    command: [http, --url, http://web:8080/index.php, --contains, php-fpm-app-ok]
+    command:
+      - php
+      - --base-url
+      - http://web:8080
+      - --extensions
+      - calendar,ctype,exif,FFI,fileinfo,ftp,gettext,iconv,PDO,Phar,posix,readline,shmop,sockets,sysvmsg,sysvsem,sysvshm,tokenizer,Zend OPcache
+      - --concurrency
+      - "8"
+      - --timeout
+      - "90"
     depends_on: [web]
     read_only: true
     tmpfs: [/tmp]

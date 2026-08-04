@@ -9,7 +9,7 @@ The accepted design is recorded in [ADR 0001](adr/0001-functional-image-contract
 The repository currently declares 20 image specifications, 16 functional suites, and 35 native platform legs.
 
 - `images/**/image.yaml` is authoritative for image family, version, Debian suite, and supported platforms.
-- `tests/functional/<family>/contract.yaml` owns family-level execution policy such as the wall-clock timeout. It does not repeat versions or platforms.
+- `tests/functional/<family>/contract.yaml` owns the wall-clock timeout, assertion-suite name, and exact required assertion IDs. It does not repeat versions or platforms.
 - `tests/functional/<family>/compose.yaml` is the executable application topology.
 - `tests/functional/fixtures.lock.json` pins external fixture images by multi-platform digest.
 - `tests/functional/result.schema.json` defines the portable envelope and pass/fail conditionals. The authoritative `result.py` validator additionally cross-binds Docker, Compose, identity, fixture-lock, and cleanup evidence that JSON Schema cannot compare across files.
@@ -41,8 +41,8 @@ The online check confirms that each pinned index still exposes every declared fi
 | --- | --- | --- |
 | L0 | Rootfs and image assertions | Validate package policy, runtime-closure Debian OS identity, numeric user identity, forbidden tools, required files, privilege bits, capabilities, and shell removal. |
 | L1 | Process smoke | Validate startup, config parsing, port readiness, or a direct command. |
-| L2 | Compose application contract | Build or configure a representative consumer and verify useful protocol behavior. |
-| L3 | Published artifact | Verify digest signature, SBOM/provenance attachment, manifest platforms, and registry pull. Some controls remain planned. |
+| L2 | Compose application and lifecycle contract | Build or configure a representative consumer, verify useful protocol behavior, then host-control a graceful stop, same-container restart, and identical second assertion pass. |
+| L3 | Registry candidate acceptance | Sign and natively pull each run-scoped architecture digest, rerun L2, assemble and sign a candidate index, prove native member selection, and rerun L2 before stable promotion. OCI-attached SBOM/provenance remain planned. |
 | L4 | Kubernetes lifecycle | Validate charts, persistence, restart, upgrade, failover, backup, and policy. Planned separately. |
 
 L0 through L2 run against the local image before an architecture artifact is pushed. The same local image then receives an SPDX SBOM and a Trivy JSON scan. The scan is not accepted merely because Trivy exits zero: a separate coverage gate binds the report to the tested image ID and requires Debian OS metadata plus a non-empty package inventory. Runtime closures must match their exact allowlist. The JSON report is retained as workflow evidence.
@@ -51,22 +51,22 @@ L0 through L2 run against the local image before an architecture artifact is pus
 
 | Image | Representative contract |
 | --- | --- |
-| `apache` | Build a child image with static content and receive the expected HTTP body. |
-| `caddy` | Load a Caddy configuration and static content, then verify HTTP response content. |
-| `haproxy` | Start a real backend service and verify an HTTP request traverses HAProxy. |
-| `memcached` | Execute protocol-level `SET` and `GET` and compare the value. |
-| `nginx` | Build a child image with static content and receive the expected HTTP body. |
-| `php-fpm` | Serve a PHP application through an Nginx FastCGI peer and verify required dynamic extensions load. |
-| `redis` | Execute RESP `PING`, `SET`, and `GET`. |
-| `node` | Build and run a Node HTTP application and verify its response. |
-| `python` | Build and run a Python HTTP application and verify its response. |
-| `java-jre` | Compile a Java application in a builder stage, run the class on DHI JRE, and verify HTTP. |
-| `dotnet-runtime` | Publish a framework-dependent .NET 8, 9, or 10 service and run it on DHI runtime. |
-| `dotnet-aspnet` | Publish a minimal ASP.NET 8, 9, or 10 API and verify an HTTP request. |
-| `mariadb` | Initialize a data directory, start the server, create a database and table, then write and read. |
-| `postgresql` | Initialize a cluster, start PostgreSQL, create a database and table, then write and read. |
-| `mongodb` | Start `mongod`, insert a document with `mongosh`, and read and validate it. |
-| `rabbitmq` | Enable the management plugin, declare a queue, publish a message, and consume it through the HTTP API. |
+| `apache` | Serve static content and verify GET, HEAD, MIME, range, conditional, missing, traversal, and concurrent request behavior. |
+| `caddy` | Verify the static contract plus a real reverse-proxy request, backend identity, and forwarding headers. |
+| `haproxy` | Balance across distinguishable backends, survive one backend loss, return the declared all-unhealthy response, and recover. |
+| `memcached` | Exercise version, set/get, multiget, add/replace, CAS, TTL, stats, malformed/oversized input, exact concurrent increments, delete, and empty state after process restart. |
+| `nginx` | Verify the static contract plus a real reverse-proxy request, backend identity, and forwarding headers. |
+| `php-fpm` | Run an Nginx-to-FastCGI application with an exact extension inventory, autoloading, query decoding, JSON echo, session cookie, upload checksum, controlled error, missing route, and concurrency checks. |
+| `redis` | Require authentication and a restricted ACL, then test strings, TTL, transaction, forbidden administration, exact concurrent increments, and AOF state across restart. |
+| `node` | Run a configured HTTP application and independently require JSON, filesystem, DNS, crypto, compression, encoding/timezone, worker, native-runtime/reflection, and local HTTP checks. |
+| `python` | Run a configured HTTP application and independently require JSON, filesystem, DNS, crypto, compression, encoding/timezone, threads, native libc, reflection, and local HTTP checks. |
+| `java-jre` | Compile a Java application in a pinned builder and independently require configuration, JSON, filesystem, DNS, crypto, compression, encoding/timezone, threads, reflection, native process, and local HTTP checks. |
+| `dotnet-runtime` | Build offline from pinned SDK fixtures and require framework-dependent host, configuration, JSON, filesystem, DNS, crypto, compression, encoding/timezone, threads, reflection, native libc, and local HTTP behavior. |
+| `dotnet-aspnet` | Extend the .NET runtime checks with Generic Host startup, routing/health, model validation, and streaming behavior. |
+| `mariadb` | Bootstrap authenticated least-privilege access; test DDL, CRUD, upsert, commit/rollback, constraints, denied administration, and retained state after restart. |
+| `postgresql` | Bootstrap password-authenticated least-privilege access; test DDL, CRUD, upsert, commit/rollback, constraints, denied role administration, and retained state after restart. |
+| `mongodb` | Bootstrap authenticated users and a transaction-capable replica set; test CRUD, upsert, unique index, commit/abort, aggregation, denied user administration, and retained state after restart. |
+| `rabbitmq` | Bootstrap a non-guest user/vhost, declare durable topology, publish persistent messages, test requeue/ack/unroutable and resource authorization, and retain a lifecycle marker across restart. |
 
 The RabbitMQ runtime does not bake an Erlang cookie into the image and exposes
 only the AMQP port by default. Clustered deployments must provide their cookie
@@ -87,7 +87,7 @@ The runner proves one of two image identities:
 
 This distinction prevents a derived fixture from being reported as exact-image execution while still proving that it is based on the image built in the current job.
 
-The runner applies separate bounded operations for setup and cleanup plus the family timeout from `contract.yaml` for execution. It captures rendered Compose configuration, build and execution logs, service state, container inspections, image inspections, identity proof, fixture lock, and cleanup evidence before removing resources.
+The runner applies separate bounded operations for setup and cleanup plus the family timeout from `contract.yaml` for execution. The host-side lifecycle controller starts the topology, accepts exactly one `DHI_ASSERTION_SUMMARY` whose IDs equal the contract, requires every long-lived service to remain running with a clean state, sends `SIGTERM` directly to the SUT container, waits for an allowed clean exit, restarts the same container ID, and repeats the verifier and exact assertion-set checks. Redis additionally binds its empty-initial and restored-restart expectations to the controller phase; Memcached proves that its in-memory marker disappears. It captures rendered Compose configuration, build and execution logs, assertion contract and summaries, lifecycle timings, service state, container inspections, image inspections, identity proof, fixture lock, and cleanup evidence before removing resources.
 
 The canonical exit classifications are:
 
@@ -156,29 +156,34 @@ Direct per-image push and manual release wrappers remain available. Their path f
 
 The central workflow and all family build workflows are read-only. They set `export_image: false` for pull requests and merge-queue candidates, never log in to the registry, and contain no push or signing operation.
 
-A trusted main-branch release has two phases:
+A trusted main-branch release has the following stages:
 
 1. `release_build` calls the same read-only family workflow with `export_image: true`. Only after static checks, smoke, the functional contract, SBOM generation, Trivy policy, and independent Trivy coverage validation succeed does the builder save the architecture-tagged image as a run-scoped artifact.
-2. `release_publish` receives `packages: write` and `id-token: write`, downloads only the named artifact from the current workflow run, verifies its repository, commit SHA, run ID, run attempt, version, platform, local image ID, byte size, and SHA-256 digest, and then pushes and signs it. Each publisher records its immutable registry digest; manifest publication validates the complete expected record set and composes only from `image@sha256:…` references after every expected architecture succeeds.
+2. `release_publish` receives `packages: write` and `id-token: write`, downloads only the named artifact from the current workflow run, and verifies its repository, commit SHA, run ID, run attempt, version, platform, local image ID, byte size, and SHA-256 digest.
+3. Each native publisher pushes a run-scoped candidate architecture tag, records and signs its immutable digest, verifies the keyless certificate identity and issuer, pulls the digest on the matching native runner, and reruns the complete functional and lifecycle contract.
+4. Manifest publication accepts only the exact set of successful immutable architecture records, creates and signs a run-scoped candidate index from `image@sha256:…` members, and on every declared native platform proves that index selection equals the accepted platform digest before rerunning the contract from the index digest.
+5. Only after all candidate acceptance jobs pass does promotion move the convenience architecture tags and finally the version-suite index tag. Every moved tag is re-resolved and compared with its accepted digest.
 
 The release wrapper serializes runs per family and ref without cancelling an active publisher. This prevents two main-branch runs from concurrently overwriting the same architecture tags. Architecture and manifest publishers also require their commit to remain an ancestor of current `main` and compare intervening paths immediately before writing. A newer documentation-only or unrelated-family commit is allowed; a force-pushed lineage or a newer change to the same family or a shared release input fails closed. Self-tests require this path classifier to equal every wrapper's push trigger paths. The accepted design is recorded in [ADR 0002](adr/0002-tested-image-publication-boundary.md).
 
 Release archive names include the workflow run attempt. To retry a failed release, use **Re-run all jobs**. Re-running only failed jobs cannot combine successful architecture archives from an older attempt with newly built archives and therefore fails closed.
 
+GHCR does not provide an atomic transaction across several mutable tags. Promotion therefore updates stable architecture tags sequentially and writes the version-suite index last as the release commit marker. A registry failure during promotion can leave some architecture convenience tags advanced while the primary version-suite tag remains on the previous accepted index. Operators must treat the primary index tag or an immutable digest as authoritative and retry or reconcile a partial promotion.
+
 After the workflow has run once, configure branch protection or the repository ruleset to require `Image contract gate`.
 
-## Required Follow-Up Tests
+## Remaining Production Gates
 
-The complete planning-only acceptance matrix is documented in [Production Functionality Acceptance Plan](production-functionality-test-plan.md). It defines bounded capability claims, common evidence, candidate-digest validation, and family-specific release, lifecycle, upgrade, recovery, and Kubernetes scenarios. It does not imply that those tests are implemented today.
+The complete target acceptance matrix is documented in [Production Functionality Acceptance Plan](production-functionality-test-plan.md). The repository now implements its common assertion contract, host-controlled graceful restart, candidate architecture/index acceptance, and chart-rendering baseline, but the broader matrix is not complete and does not provide a universal production guarantee.
 
 The current contracts establish baseline runtime compatibility. Production promotion should also require:
 
-1. Pull each final digest on native amd64 and arm64 after manifest publication.
-2. Verify cosign certificate identity and issuer, not only signature presence.
-3. Retrieve an OCI-attached SBOM and provenance statement for the same digest.
-4. Test clean shutdown and restart with persisted data for all stateful services.
-5. Test backup and restore for MariaDB, PostgreSQL, and MongoDB.
-6. Test supported-version upgrades with retained data.
-7. Test authenticated and TLS-enabled service configuration.
-8. Test Helm charts in kind, including readiness, disruption, NetworkPolicy, and failover.
-9. Add deliberate rootfs workflow-policy violations beyond the covered Trivy no-OS/no-package cases to prove every L0 gate fails closed.
+1. Attach the SBOM and provenance to the OCI digest and verify their subjects after registry pull.
+2. Add post-promotion native pulls of the public stable tags; current native acceptance uses the same immutable candidate digests before those tags move.
+3. Add readiness withdrawal and in-flight drain assertions around graceful shutdown, plus crash/SIGKILL recovery where applicable.
+4. Test backup and restore for MariaDB, PostgreSQL, and MongoDB.
+5. Test previous-accepted-digest and supported-version upgrades with retained data.
+6. Add TLS-enabled service profiles and negative CA/hostname/plaintext checks; current stateful fixtures cover password authentication and authorization but not TLS.
+7. Test Helm charts in kind, including probes, arbitrary UID, persistence, disruption, NetworkPolicy, rolling update, and failover. Current chart gates are render-time only.
+8. Add deliberate rootfs workflow-policy violations beyond the covered Trivy no-OS/no-package cases to prove every L0 gate fails closed.
+9. Enforce supported-version and Debian lifecycle policy; functional success cannot make EOL Node 18 or RabbitMQ 3.10 production-eligible.

@@ -1,2 +1,19 @@
 schemaVersion: 1
 timeoutSeconds: 600
+assertionSuite: http
+requiredAssertions:
+  - http.ready
+  - http.status
+  - http.body.contains
+  - http.runtime.response-json
+  - http.runtime.check-set
+  - http.runtime.config-precedence
+  - http.runtime.json
+  - http.runtime.filesystem-tmp
+  - http.runtime.dns
+  - http.runtime.crypto
+  - http.runtime.compression
+  - http.runtime.encoding-timezone
+  - http.runtime.worker-thread
+  - http.runtime.reflection-native-runtime
+  - http.runtime.local-http

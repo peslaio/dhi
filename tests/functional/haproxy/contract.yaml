@@ -1,2 +1,12 @@
 schemaVersion: 1
 timeoutSeconds: 600
+assertionSuite: haproxy
+requiredAssertions:
+  - haproxy.ready
+  - haproxy.forwarding.json
+  - haproxy.forwarding.request
+  - haproxy.balance.backends
+  - haproxy.failover.available
+  - haproxy.failover.recovery
+  - haproxy.failover.all-unhealthy
+  - haproxy.failover.final-recovery

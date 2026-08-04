@@ -20,9 +20,19 @@ COMMON_RELEASE_PATHS = {
     ".github/workflows/reusable-publish-image-manifest.yml",
     ".github/workflows/reusable-publish-tested-image.yml",
     "tests/functional/contractctl.rb",
+    "tests/functional/fixturectl.py",
+    "tests/functional/fixtures.lock.json",
+    "tests/functional/lifecyclectl.py",
     "tests/functional/releasectl.py",
+    "tests/functional/result.py",
+    "tests/functional/result.schema.json",
+    "tests/functional/run.sh",
     "tests/functional/scan_result.py",
+    "tests/functional/timeout.py",
 }
+COMMON_RELEASE_PREFIXES = (
+    "tests/functional/harness/",
+)
 
 
 class ReleaseArchiveError(ValueError):
@@ -63,7 +73,11 @@ def release_relevant_path(image_name, path):
     require(IMAGE_NAME_RE.fullmatch(image_name), f"invalid image name: {image_name}")
     if path in COMMON_RELEASE_PATHS:
         return True
+    if path.startswith(COMMON_RELEASE_PREFIXES):
+        return True
     if path.startswith(f"images/{image_name}/"):
+        return True
+    if path.startswith(f"tests/functional/{image_name}/"):
         return True
     if not path.startswith(".github/workflows/"):
         return False
@@ -443,6 +457,64 @@ def command_manifest_sources(arguments):
     print(f"Verified {len(source_refs)} immutable architecture digest records")
 
 
+def verify_index_member(document, platform, expected_digest):
+    require(isinstance(document, dict), "OCI index must be an object")
+    require(document.get("schemaVersion") == 2, "OCI index schemaVersion must equal 2")
+    require(
+        document.get("mediaType")
+        in {
+            "application/vnd.oci.image.index.v1+json",
+            "application/vnd.docker.distribution.manifest.list.v2+json",
+        },
+        "OCI index mediaType is unsupported",
+    )
+    manifests = document.get("manifests")
+    require(isinstance(manifests, list) and manifests, "OCI index has no manifests")
+    require(SHA256_RE.fullmatch(expected_digest), "expected platform digest is invalid")
+    os_name, architecture, variant = platform_parts(platform)
+
+    matches = []
+    for descriptor in manifests:
+        require(isinstance(descriptor, dict), "OCI index manifest descriptor must be an object")
+        descriptor_platform = descriptor.get("platform")
+        if not isinstance(descriptor_platform, dict):
+            continue
+        if (
+            descriptor_platform.get("os") == os_name
+            and descriptor_platform.get("architecture") == architecture
+            and (variant is None or descriptor_platform.get("variant") == variant)
+        ):
+            matches.append(descriptor)
+
+    require(len(matches) == 1, f"OCI index must contain exactly one descriptor for {platform}")
+    observed_digest = matches[0].get("digest")
+    require(
+        matches[0].get("mediaType")
+        in {
+            "application/vnd.oci.image.manifest.v1+json",
+            "application/vnd.docker.distribution.manifest.v2+json",
+        },
+        "OCI index platform descriptor mediaType is unsupported",
+    )
+    require(SHA256_RE.fullmatch(observed_digest or ""), "OCI index platform digest is invalid")
+    require(
+        observed_digest == expected_digest,
+        f"OCI index {platform} digest {observed_digest} does not match {expected_digest}",
+    )
+    return observed_digest
+
+
+def command_verify_index(arguments):
+    inspect_path = pathlib.Path(arguments.inspect)
+    try:
+        with inspect_path.open(encoding="utf-8") as stream:
+            document = json.load(stream)
+    except json.JSONDecodeError as error:
+        raise ReleaseArchiveError(f"OCI index JSON is invalid: {error}") from error
+    digest = verify_index_member(document, arguments.platform, arguments.expected_digest)
+    print(f"Verified OCI index member {arguments.platform}@{digest}")
+
+
 def command_guard_current(arguments):
     changed_files = pathlib.Path(arguments.changed_files)
     try:
@@ -523,6 +595,14 @@ def parser():
     manifest.add_argument("--run-id", required=True)
     manifest.add_argument("--run-attempt", required=True)
     manifest.set_defaults(handler=command_manifest_sources)
+
+    verify_index = commands.add_parser(
+        "verify-index", help="Verify one native platform member of an OCI index"
+    )
+    verify_index.add_argument("--inspect", required=True)
+    verify_index.add_argument("--platform", required=True)
+    verify_index.add_argument("--expected-digest", required=True)
+    verify_index.set_defaults(handler=command_verify_index)
 
     guard = commands.add_parser(
         "guard-current", help="Reject a release superseded by relevant main changes"

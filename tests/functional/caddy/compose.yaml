@@ -1,4 +1,18 @@
 services:
+  backend:
+    build:
+      context: ../harness
+      args:
+        PYTHON_IMAGE: ${DHI_FIXTURE_PYTHON_IMAGE:?set DHI_FIXTURE_PYTHON_IMAGE}
+    pull_policy: never
+    labels:
+      io.pesla.dhi.functional.role: fixture
+    command: [serve, --port, "8080", --body, dhi-caddy-backend-ok, --identity, caddy-backend]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
   app:
     image: ${DHI_DERIVED_IMAGE:?set DHI_DERIVED_IMAGE}
     build:
@@ -17,6 +31,7 @@ services:
       - /data:uid=10001,gid=0,mode=0770
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
+    depends_on: [backend]
 
   test:
     build:
@@ -26,8 +41,21 @@ services:
     pull_policy: never
     labels:
       io.pesla.dhi.functional.role: test
-    command: [http, --url, http://app:8080/, --contains, dhi-caddy-app-ok]
-    depends_on: [app]
+    command:
+      - web
+      - --base-url
+      - http://app:8080
+      - --marker
+      - dhi-caddy-app-ok
+      - --proxy-path
+      - /proxy/echo
+      - --proxy-identity
+      - caddy-backend
+      - --concurrency
+      - "8"
+      - --timeout
+      - "90"
+    depends_on: [app, backend]
     read_only: true
     tmpfs: [/tmp]
     cap_drop: [ALL]

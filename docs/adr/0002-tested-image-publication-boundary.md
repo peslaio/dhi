@@ -34,7 +34,9 @@ The archive and metadata are uploaded under a unique matrix-leg and run-attempt 
 
 Each family has a thin main-branch release wrapper. Its `release_build` job calls the read-only family workflow and exports tested archives. Only after that call succeeds does `release_publish` receive `packages: write` and `id-token: write` and call the common publisher.
 
-The publisher downloads the named artifact from the current run without a cross-run token or run identifier. It validates all metadata against the current GitHub context, checks archive size and digest, loads the archive, and proves the loaded image ID and platform match the tested image. It then pushes and signs each architecture digest and uploads a small same-attempt digest record. Manifest publication validates the exact expected architecture record set and composes only from immutable `image@sha256:…` references after all declared architecture publishers succeed.
+The publisher downloads the named artifact from the current run without a cross-run token or run identifier. It validates all metadata against the current GitHub context, checks archive size and digest, loads the archive, and proves the loaded image ID and platform match the tested image. It then pushes a run-scoped candidate architecture tag, signs the immutable digest, verifies the keyless certificate identity and issuer, and pulls and reruns the functional/lifecycle contract from that digest on the matching native runner. Only then does it upload an accepted same-attempt digest record.
+
+Manifest publication validates the exact expected accepted architecture record set and composes a run-scoped candidate index only from immutable `image@sha256:…` references. The index is signed; every declared native runner verifies its signer, proves that index selection resolves to its accepted platform digest, and reruns the contract from the index digest. Stable architecture convenience tags and the version-suite index tag move only after all candidate acceptance jobs pass.
 
 Every reusable-workflow call declares its token permissions explicitly. Write operations and write scopes are confined to the two reusable publisher workflows and the release wrapper call boundary. Pull requests continue to use `pull_request`, never `pull_request_target`.
 
@@ -44,12 +46,14 @@ Release wrappers use a distinct concurrency group per family and ref with cancel
 
 - Pull-request, merge-queue, scheduled contract, and manual validation graphs are structurally read-only.
 - Registry credentials and OIDC signing capability are unavailable while untrusted image build and application test code executes.
-- The published architecture image is the same Docker image ID and archive that passed the gates; there is no privileged rebuild.
+- The published architecture candidate is the same Docker image ID and archive that passed the local gates; there is no privileged rebuild.
+- Every immutable architecture digest and the assembled candidate index are pulled and retested on their declared native platforms before stable promotion.
+- Keyless signature verification binds both candidate stages to the expected repository workflow identity on `main` and GitHub's Actions OIDC issuer.
 - Same-run provenance and archive integrity are checked before any registry write.
 - A release retry must use **Re-run all jobs**; a partial failed-job rerun intentionally cannot reuse or mix archives from an earlier attempt.
 - Releases consume additional artifact storage and transfer time, and a sufficiently large Docker archive can hit GitHub artifact limits.
 - Architecture tags remain mutable conveniences, but final manifests are constructed from captured immutable architecture digest references and are not affected if an architecture tag later moves.
-- A failed multi-architecture release can leave one new architecture tag published while withholding the final manifest. Retry and cleanup policy remain operational work.
+- Candidate failure leaves stable tags unchanged. Promotion itself is not atomic across tags: stable architecture tags move sequentially and the version-suite index moves last as the release commit marker. A registry failure can leave partial architecture-tag advancement while withholding the new primary index; retry and reconciliation remain operational work.
 
 ## Alternatives considered
 

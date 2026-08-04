@@ -1,2 +1,18 @@
 schemaVersion: 1
 timeoutSeconds: 900
+assertionSuite: rabbitmq
+requiredAssertions:
+  - auth.management_ready
+  - auth.wrong_password_rejected
+  - auth.remote_guest_rejected
+  - authorization.vhost_admin_denied
+  - topology.durable_exchange
+  - topology.durable_queues
+  - topology.idempotent_declarations
+  - messaging.persistent_publish
+  - messaging.requeue
+  - messaging.acknowledge
+  - messaging.unroutable
+  - authorization.resource_scope
+  - persistence.lifecycle_marker
+  - state.queue_drained

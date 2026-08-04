@@ -121,6 +121,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "assertionContract": { "const": "assertion-contract.json" },
         "cleanupLog": { "const": "cleanup.log" },
         "composeBuildLog": { "const": "compose-build.log" },
         "composeConfig": { "const": "compose-config.yaml" },
@@ -133,6 +134,7 @@
         "fixtureLock": { "const": "fixtures.lock.json" },
         "fixtureValidation": { "const": "fixture-validation.json" },
         "identityProof": { "const": "identity.json" },
+        "lifecycleProof": { "const": "lifecycle.json" },
         "sourceImageInspect": { "const": "source-image.inspect.json" },
         "sutImageInspect": { "const": "sut-image.inspect.json" }
       }
@@ -249,6 +251,7 @@
           "evidence": {
             "type": "object",
             "required": [
+              "assertionContract",
               "cleanupLog",
               "composeBuildLog",
               "composeConfig",
@@ -261,6 +264,7 @@
               "fixtureLock",
               "fixtureValidation",
               "identityProof",
+              "lifecycleProof",
               "sourceImageInspect",
               "sutImageInspect"
             ]

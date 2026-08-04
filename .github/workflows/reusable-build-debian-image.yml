@@ -510,8 +510,8 @@ jobs:
 
               path="$(realpath -sm "$path")"
               if [ -d "$rootfs$path" ] && [ ! -L "$rootfs$path" ]; then
-                sudo mkdir -p "$runtime_rootfs$(dirname "$path")"
-                sudo cp -a "$rootfs$path" "$runtime_rootfs$path"
+                sudo mkdir -p "$runtime_rootfs$path"
+                sudo cp -a "$rootfs$path/." "$runtime_rootfs$path/"
                 while IFS= read -r child; do
                   rel="/${child#"$rootfs"/}"
                   record_runtime_package "$rel"

@@ -28,6 +28,7 @@ CLASSIFICATIONS = {
 }
 
 EVIDENCE_PATHS = {
+    "assertionContract": "assertion-contract.json",
     "cleanupLog": "cleanup.log",
     "composeBuildLog": "compose-build.log",
     "composeConfig": "compose-config.yaml",
@@ -40,10 +41,12 @@ EVIDENCE_PATHS = {
     "fixtureLock": "fixtures.lock.json",
     "fixtureValidation": "fixture-validation.json",
     "identityProof": "identity.json",
+    "lifecycleProof": "lifecycle.json",
     "sourceImageInspect": "source-image.inspect.json",
     "sutImageInspect": "sut-image.inspect.json",
 }
 PASS_EVIDENCE = set(EVIDENCE_PATHS)
+ASSERTION_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 
 
 def evidence_path_present(path: pathlib.Path) -> bool:
@@ -412,6 +415,96 @@ def timestamp(value: Any, path: str) -> str:
     return text
 
 
+def validate_assertion_contract(value: Any, family: str) -> dict[str, Any]:
+    assertion_contract = exact_object(
+        value,
+        "assertion contract evidence",
+        {"schemaVersion", "family", "suite", "requiredAssertions"},
+    )
+    if assertion_contract["schemaVersion"] != 1 or assertion_contract["family"] != family:
+        raise ValueError("assertion contract evidence has the wrong schema or family")
+    suite = string_value(assertion_contract["suite"], "assertion contract suite")
+    if not ASSERTION_ID_RE.fullmatch(suite):
+        raise ValueError("assertion contract suite is not canonical")
+    required = string_array(
+        assertion_contract["requiredAssertions"],
+        "assertion contract requiredAssertions",
+    )
+    if (
+        not required
+        or len(required) != len(set(required))
+        or any(not ASSERTION_ID_RE.fullmatch(item) for item in required)
+    ):
+        raise ValueError("assertion contract IDs must be non-empty, unique, and canonical")
+    return assertion_contract
+
+
+def validate_assertion_summary(value: Any, assertion_contract: dict[str, Any], path: str) -> None:
+    summary = exact_object(
+        value,
+        path,
+        {"assertions", "counts", "outcome", "schemaVersion", "suite"},
+    )
+    if (
+        summary["schemaVersion"] != 1
+        or summary["suite"] != assertion_contract["suite"]
+        or summary["outcome"] != "pass"
+    ):
+        raise ValueError(f"{path} has the wrong schema, suite, or outcome")
+    if not isinstance(summary["assertions"], list) or not summary["assertions"]:
+        raise ValueError(f"{path} must contain assertions")
+    assertion_ids = []
+    for index, record_value in enumerate(summary["assertions"]):
+        record = exact_object(
+            record_value, f"{path}.assertions[{index}]", {"id", "status"}
+        )
+        assertion_id = string_value(record["id"], f"{path}.assertions[{index}].id")
+        if not ASSERTION_ID_RE.fullmatch(assertion_id) or record["status"] != "pass":
+            raise ValueError(f"{path} contains a non-canonical or non-passing assertion")
+        assertion_ids.append(assertion_id)
+    counts = exact_object(summary["counts"], f"{path}.counts", {"fail", "pass"})
+    if (
+        len(assertion_ids) != len(set(assertion_ids))
+        or set(assertion_ids) != set(assertion_contract["requiredAssertions"])
+        or type(counts["fail"]) is not int
+        or type(counts["pass"]) is not int
+        or counts != {"fail": 0, "pass": len(assertion_ids)}
+    ):
+        raise ValueError(f"{path} does not satisfy the required assertion set")
+
+
+def validate_lifecycle_service_states(
+    value: Any,
+    expected_services: dict[str, dict[str, Any]],
+    path: str,
+) -> None:
+    if not isinstance(value, list):
+        raise ValueError(f"{path} must be an array")
+    records = {}
+    for index, record_value in enumerate(value):
+        record = exact_object(
+            record_value,
+            f"{path}[{index}]",
+            {"name", "containerId", "state", "exitCode", "oomKilled"},
+        )
+        name = string_value(record["name"], f"{path}[{index}].name")
+        if name in records:
+            raise ValueError(f"{path} contains duplicate service {name}")
+        if (
+            record["state"] != "running"
+            or record["exitCode"] != 0
+            or type(record["oomKilled"]) is not bool
+            or record["oomKilled"]
+        ):
+            raise ValueError(f"{path} contains a non-running service")
+        records[name] = record
+    if set(records) != set(expected_services):
+        raise ValueError(f"{path} does not cover every long-lived service")
+    for name, service in expected_services.items():
+        if records[name]["containerId"] != service["containerId"]:
+            raise ValueError(f"{path} container identity changed for {name}")
+
+
 def rootfs_layers(image: dict[str, Any], path: str) -> list[str]:
     rootfs = image.get("RootFS")
     if not isinstance(rootfs, dict):
@@ -430,6 +523,10 @@ def validate_pass_evidence(result: dict[str, Any], artifact_dir: pathlib.Path) -
     image = result["image"]
     identity = image["identity"]
     contract = result["contract"]
+
+    assertion_contract = validate_assertion_contract(
+        load_json(artifact_dir / evidence["assertionContract"]), contract["family"]
+    )
 
     identity_proof = load_json(artifact_dir / evidence["identityProof"])
     if identity_proof != identity:
@@ -512,6 +609,157 @@ def validate_pass_evidence(result: dict[str, Any], artifact_dir: pathlib.Path) -
         or fixture_validation["status"] != "pass"
     ):
         raise ValueError("fixture validation evidence is not a passing lock validation")
+
+    lifecycle = exact_object(
+        load_json(artifact_dir / evidence["lifecycleProof"]),
+        "lifecycle evidence",
+        {
+            "schemaVersion",
+            "contract",
+            "identity",
+            "assertionContract",
+            "phases",
+            "outcome",
+            "durationMs",
+        },
+    )
+    if lifecycle["schemaVersion"] != 1:
+        raise ValueError("lifecycle evidence has an unsupported schemaVersion")
+    if lifecycle["assertionContract"] != assertion_contract:
+        raise ValueError("lifecycle assertion contract does not match its evidence file")
+    lifecycle_contract = exact_object(
+        lifecycle["contract"],
+        "lifecycle evidence contract",
+        {"family", "version", "platform", "project", "sutService", "testService"},
+    )
+    expected_lifecycle_contract = {
+        "family": contract["family"],
+        "version": contract["version"],
+        "platform": contract["platform"],
+        "project": result["run"]["project"],
+        "sutService": contract["sutService"],
+        "testService": contract["testService"],
+    }
+    if lifecycle_contract != expected_lifecycle_contract:
+        raise ValueError("lifecycle evidence contract does not match the result")
+    lifecycle_identity = exact_object(
+        lifecycle["identity"],
+        "lifecycle evidence identity",
+        {"sourceImageId", "sutImageId"},
+    )
+    if lifecycle_identity != {
+        "sourceImageId": image["expectedId"],
+        "sutImageId": image["containerImageId"],
+    }:
+        raise ValueError("lifecycle evidence image identity does not match the result")
+
+    phases = exact_object(
+        lifecycle["phases"],
+        "lifecycle evidence phases",
+        {"initial", "shutdown", "restart"},
+    )
+    initial = exact_object(
+        phases["initial"],
+        "lifecycle initial phase",
+        {
+            "startedAt",
+            "finishedAt",
+            "testContainerId",
+            "testExitCode",
+            "sutContainerId",
+            "sutState",
+            "assertions",
+            "services",
+        },
+    )
+    timestamp(initial["startedAt"], "lifecycle initial startedAt")
+    timestamp(initial["finishedAt"], "lifecycle initial finishedAt")
+    if initial["testExitCode"] != 0 or initial["sutState"] != "running":
+        raise ValueError("lifecycle initial application probe did not pass")
+    validate_assertion_summary(
+        initial["assertions"], assertion_contract, "lifecycle initial assertions"
+    )
+
+    shutdown = exact_object(
+        phases["shutdown"],
+        "lifecycle shutdown phase",
+        {
+            "signal",
+            "startedAt",
+            "finishedAt",
+            "durationMs",
+            "sutExitCode",
+            "sutState",
+            "oomKilled",
+        },
+    )
+    if shutdown["signal"] != "SIGTERM":
+        raise ValueError("lifecycle shutdown did not use SIGTERM")
+    timestamp(shutdown["startedAt"], "lifecycle shutdown startedAt")
+    timestamp(shutdown["finishedAt"], "lifecycle shutdown finishedAt")
+    integer_value(shutdown["durationMs"], "lifecycle shutdown durationMs", minimum=0)
+    shutdown_exit_code = integer_value(
+        shutdown["sutExitCode"], "lifecycle shutdown sutExitCode", minimum=0, maximum=255
+    )
+    if shutdown_exit_code not in (0, 143) or shutdown["sutState"] != "exited":
+        raise ValueError("lifecycle shutdown did not stop cleanly after SIGTERM")
+    if type(shutdown["oomKilled"]) is not bool or shutdown["oomKilled"]:
+        raise ValueError("lifecycle shutdown must not be OOM-killed")
+
+    restart = exact_object(
+        phases["restart"],
+        "lifecycle restart phase",
+        {
+            "startedAt",
+            "finishedAt",
+            "durationMs",
+            "testExitCode",
+            "sutContainerId",
+            "sutState",
+            "oomKilled",
+            "assertions",
+            "services",
+        },
+    )
+    timestamp(restart["startedAt"], "lifecycle restart startedAt")
+    timestamp(restart["finishedAt"], "lifecycle restart finishedAt")
+    integer_value(restart["durationMs"], "lifecycle restart durationMs", minimum=0)
+    if restart["testExitCode"] != 0 or restart["sutState"] != "running":
+        raise ValueError("lifecycle restart application probe did not pass")
+    if type(restart["oomKilled"]) is not bool or restart["oomKilled"]:
+        raise ValueError("lifecycle restart must not be OOM-killed")
+    validate_assertion_summary(
+        restart["assertions"], assertion_contract, "lifecycle restart assertions"
+    )
+
+    services_by_name = {service["name"]: service for service in result["services"]}
+    long_lived_services = {
+        name: service
+        for name, service in services_by_name.items()
+        if service["role"] != "test"
+    }
+    validate_lifecycle_service_states(
+        initial["services"], long_lived_services, "lifecycle initial services"
+    )
+    validate_lifecycle_service_states(
+        restart["services"], long_lived_services, "lifecycle restart services"
+    )
+    if initial["testContainerId"] != services_by_name[contract["testService"]]["containerId"]:
+        raise ValueError("lifecycle initial test container does not match service evidence")
+    if initial["sutContainerId"] != services_by_name[contract["sutService"]]["containerId"]:
+        raise ValueError("lifecycle initial SUT container does not match service evidence")
+    if restart["sutContainerId"] != initial["sutContainerId"]:
+        raise ValueError("lifecycle restart replaced the SUT container")
+
+    lifecycle_outcome = exact_object(
+        lifecycle["outcome"],
+        "lifecycle evidence outcome",
+        {"status", "message"},
+    )
+    if lifecycle_outcome["status"] != "pass":
+        raise ValueError("lifecycle evidence outcome is not passing")
+    string_value(lifecycle_outcome["message"], "lifecycle evidence outcome message")
+    integer_value(lifecycle["durationMs"], "lifecycle evidence durationMs", minimum=0)
 
 
 def validate_result(result: Any, artifact_dir: Optional[pathlib.Path] = None) -> None:
@@ -742,6 +990,13 @@ def validate_result(result: Any, artifact_dir: Optional[pathlib.Path] = None) ->
         test_record = services_by_name[contract["testService"]]
         if sut_record["role"] != "sut" or test_record["role"] != "test":
             raise ValueError("contract service names do not match recorded service roles")
+        for service in result["services"]:
+            if service["role"] != "test" and (
+                service["state"] != "running" or service["exitCode"] != 0
+            ):
+                raise ValueError(
+                    "passing results require every non-test service to be running"
+                )
         if test_record["exitCode"] != 0:
             raise ValueError("passing results require test service exit code 0")
         if test_record["state"] != "exited":

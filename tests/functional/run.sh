@@ -23,6 +23,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 result_helper="$script_dir/result.py"
 timeout_helper="$script_dir/timeout.py"
 fixture_helper="$script_dir/fixturectl.py"
+lifecycle_helper="$script_dir/lifecyclectl.py"
 suite_relative="tests/functional/${image_name}"
 
 started_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
@@ -337,7 +338,7 @@ on_signal() {
 if ! command -v python3 >/dev/null 2>&1; then
   fail_run "$EXIT_INFRASTRUCTURE" infrastructure_failure preflight "python3 is required by the functional runner"
 fi
-if [ ! -f "$result_helper" ] || [ ! -f "$timeout_helper" ] || [ ! -f "$fixture_helper" ]; then
+if [ ! -f "$result_helper" ] || [ ! -f "$timeout_helper" ] || [ ! -f "$fixture_helper" ] || [ ! -f "$lifecycle_helper" ]; then
   fail_run "$EXIT_INFRASTRUCTURE" infrastructure_failure preflight "functional runner helper files are missing"
 fi
 if ! [[ "$image_name" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
@@ -382,6 +383,18 @@ fi
 if ! [[ "$timeout_seconds" =~ ^[1-9][0-9]*$ ]] || [ "$timeout_seconds" -gt 3600 ]; then
   timeout_seconds=""
   fail_run "$EXIT_INFRASTRUCTURE" infrastructure_failure metadata "resolved timeout_seconds must be an integer from 1 to 3600"
+fi
+
+assertion_contract="$artifact_dir/assertion-contract.json"
+assertion_contract_error="$artifact_dir/assertion-contract.error.log"
+if [ ! -f "$script_dir/contractctl.rb" ]; then
+  fail_run "$EXIT_INFRASTRUCTURE" infrastructure_failure metadata "contractctl.rb is required to resolve the assertion contract"
+fi
+if ! "$timeout_helper" --timeout 30 --kill-after 5 -- \
+  ruby "$script_dir/contractctl.rb" resolve \
+  --name "$image_name" --version "$image_version" --platform "$platform" \
+  --field assertion_contract >"$assertion_contract" 2>"$assertion_contract_error"; then
+  fail_run "$EXIT_INFRASTRUCTURE" infrastructure_failure metadata "contract metadata could not resolve assertion_contract"
 fi
 
 if ! python3 "$fixture_helper" validate >"$artifact_dir/fixture-validation.json" 2>"$artifact_dir/fixture-validation.log"; then
@@ -611,12 +624,24 @@ if ! python3 "$result_helper" verify-identity \
   fail_run "$EXIT_IDENTITY" identity_failure identity "created SUT failed image identity proof"
 fi
 
-run_logged "$timeout_seconds" "$artifact_dir/compose-up.log" \
-  "${compose[@]}" up --no-build --pull never --no-recreate \
-  --abort-on-container-exit --exit-code-from "$test_service" --timeout 10
+lifecycle_watchdog_seconds=$((timeout_seconds + 30))
+run_logged "$lifecycle_watchdog_seconds" "$artifact_dir/compose-up.log" \
+  python3 "$lifecycle_helper" \
+  --compose-file "$compose_file" \
+  --project "$project" \
+  --family "$image_name" \
+  --version "$image_version" \
+  --platform "$platform" \
+  --sut-service "$sut_service" \
+  --test-service "$test_service" \
+  --source-image-id "$expected_image_id" \
+  --sut-image-id "$container_image_id" \
+  --assertion-contract "$assertion_contract" \
+  --timeout "$timeout_seconds" \
+  --output "$artifact_dir/lifecycle.json"
 compose_status=$?
 outcome_raw_exit_code="$compose_status"
-if [ "$compose_status" -eq 124 ]; then
+if [ "$compose_status" -eq 13 ] || [ "$compose_status" -eq 124 ]; then
   fail_run "$EXIT_TIMEOUT" timeout execution "functional contract exceeded ${timeout_seconds}s" "$compose_status"
 elif [ "$compose_status" -eq 125 ]; then
   fail_run "$EXIT_INFRASTRUCTURE" infrastructure_failure execution "failed to persist Compose execution output" "$compose_status"
@@ -660,9 +685,24 @@ fi
 
 case "$test_exit_code" in
   0)
-    if [ "$compose_status" -ne 0 ]; then
-      fail_run "$EXIT_INFRASTRUCTURE" infrastructure_failure execution "Compose failed although the test container exited successfully" "$compose_status"
-    fi
+    case "$compose_status" in
+      0) ;;
+      10)
+        fail_run "$EXIT_ASSERTION" assertion_failure lifecycle "application or restart assertion failed" "$compose_status"
+        ;;
+      11)
+        fail_run "$EXIT_READINESS" setup_readiness_failure lifecycle "SUT lifecycle or restart readiness failed" "$compose_status"
+        ;;
+      13)
+        fail_run "$EXIT_TIMEOUT" timeout lifecycle "functional lifecycle exceeded ${timeout_seconds}s" "$compose_status"
+        ;;
+      14)
+        fail_run "$EXIT_INFRASTRUCTURE" infrastructure_failure lifecycle "functional lifecycle controller failed" "$compose_status"
+        ;;
+      *)
+        fail_run "$EXIT_INFRASTRUCTURE" infrastructure_failure lifecycle "functional lifecycle returned an unexpected status" "$compose_status"
+        ;;
+    esac
     ;;
   1|10)
     fail_run "$EXIT_ASSERTION" assertion_failure execution "application contract assertion failed" "$test_exit_code"

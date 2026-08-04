@@ -1,2 +1,23 @@
 schemaVersion: 1
 timeoutSeconds: 600
+assertionSuite: memcached
+requiredAssertions:
+  - memcached.ready
+  - memcached.version
+  - memcached.restart.empty
+  - memcached.set
+  - memcached.get
+  - memcached.multiget
+  - memcached.add-existing
+  - memcached.replace-missing
+  - memcached.gets
+  - memcached.cas-update
+  - memcached.cas-stale
+  - memcached.ttl.store
+  - memcached.ttl.expired
+  - memcached.stats
+  - memcached.malformed-rejected
+  - memcached.oversized-rejected
+  - memcached.concurrent.exact-counter
+  - memcached.delete
+  - memcached.restart.marker-written

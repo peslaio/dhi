@@ -20,7 +20,10 @@ module DhiContracts
   EXPECTED_LEG_COUNT = 35
   SUPPORTED_ARCHITECTURES = %w[amd64 arm64].freeze
   ARCHITECTURE_ORDER = SUPPORTED_ARCHITECTURES.each_with_index.to_h.freeze
-  CONTRACT_KEYS = %w[schemaVersion timeoutSeconds].freeze
+  CONTRACT_KEYS = %w[
+    schemaVersion timeoutSeconds assertionSuite requiredAssertions
+  ].freeze
+  ASSERTION_ID_PATTERN = /\A[a-z0-9][a-z0-9._-]*\z/
 
   SPEC_KEYS = %w[
     name version profile base repositories packages user paths files environment
@@ -236,12 +239,30 @@ module DhiContracts
     assert(raw["schemaVersion"] == SCHEMA_VERSION, "#{context}.schemaVersion must be #{SCHEMA_VERSION}")
     timeout = integer(raw["timeoutSeconds"], "#{context}.timeoutSeconds")
     assert(timeout.between?(60, 1_800), "#{context}.timeoutSeconds must be between 60 and 1800")
+    assertion_suite = string(raw["assertionSuite"], "#{context}.assertionSuite")
+    assert(
+      assertion_suite.match?(ASSERTION_ID_PATTERN),
+      "#{context}.assertionSuite must be a canonical assertion suite name"
+    )
+    required_assertions = string_array(
+      raw["requiredAssertions"], "#{context}.requiredAssertions"
+    )
+    assert(
+      required_assertions.all? { |assertion_id| assertion_id.match?(ASSERTION_ID_PATTERN) },
+      "#{context}.requiredAssertions contains a non-canonical assertion ID"
+    )
+    assert(
+      required_assertions.uniq.length == required_assertions.length,
+      "#{context}.requiredAssertions contains duplicates"
+    )
 
     {
       name: family,
       path: path,
       compose_path: File.join(File.dirname(path), "compose.yaml"),
-      timeout_seconds: timeout
+      timeout_seconds: timeout,
+      assertion_suite: assertion_suite,
+      required_assertions: required_assertions
     }
   end
 
@@ -306,7 +327,9 @@ module DhiContracts
           debian_suite: spec[:debian_suite],
           debian_arch: architecture,
           platform: "linux/#{architecture}",
-          timeout_seconds: contract[:timeout_seconds]
+          timeout_seconds: contract[:timeout_seconds],
+          assertion_suite: contract[:assertion_suite],
+          required_assertions: contract[:required_assertions]
         }
       end
     end
@@ -506,7 +529,10 @@ module DhiContracts
     assert(arguments.empty?, "unexpected resolve arguments: #{arguments.join(' ')}")
     %i[name version platform].each { |key| assert(options[key], "resolve requires --#{key} VALUE") }
     if options[:field]
-      assert(options[:field] == "timeout_seconds", "resolve --field only supports timeout_seconds")
+      assert(
+        %w[timeout_seconds assertion_contract].include?(options[:field]),
+        "resolve --field only supports timeout_seconds or assertion_contract"
+      )
     end
     options
   end
@@ -522,8 +548,15 @@ module DhiContracts
     assert(matches.length == 1, "undeclared or ambiguous contract leg: #{options[:name]}:#{options[:version]}:#{options[:platform]}")
     leg = matches.first
 
-    if options[:field]
+    if options[:field] == "timeout_seconds"
       puts leg[:timeout_seconds]
+    elsif options[:field] == "assertion_contract"
+      puts JSON.generate(
+        "schemaVersion" => SCHEMA_VERSION,
+        "family" => leg[:name],
+        "suite" => leg[:assertion_suite],
+        "requiredAssertions" => leg[:required_assertions]
+      )
     else
       row = { "legId" => leg_id(leg) }.merge(build_row(leg))
       puts JSON.generate(row)

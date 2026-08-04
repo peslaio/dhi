@@ -4,4 +4,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+  <ItemGroup>
+    <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Update="NuGet.Config" CopyToOutputDirectory="Never" CopyToPublishDirectory="Never" />
+  </ItemGroup>
 </Project>

@@ -1,2 +1,23 @@
 schemaVersion: 1
 timeoutSeconds: 600
+assertionSuite: web
+requiredAssertions:
+  - web.ready
+  - web.root.status
+  - web.root.marker
+  - web.root.mime
+  - web.head.status
+  - web.head.empty-body
+  - web.head.content-length
+  - web.range.status
+  - web.range.body
+  - web.range.header
+  - web.conditional.validator-present
+  - web.conditional.not-modified
+  - web.missing.status
+  - web.traversal.rejected
+  - web.concurrent.correct
+  - web.proxy.status
+  - web.proxy.json
+  - web.proxy.identity
+  - web.proxy.forwarding

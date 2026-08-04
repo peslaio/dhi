@@ -11,7 +11,7 @@ updateStrategy:
 
 image:
   registry: ghcr.io
-  repository: tpesla/php-fpm
+  repository: peslaio/php-fpm
   tag: 8.2-bookworm
   digest: ""
   pullPolicy: IfNotPresent

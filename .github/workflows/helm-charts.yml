@@ -5,10 +5,12 @@ on:
     paths:
       - .github/workflows/helm-charts.yml
       - charts/**
+      - tests/charts/**
   pull_request:
     paths:
       - .github/workflows/helm-charts.yml
       - charts/**
+      - tests/charts/**
   workflow_dispatch:
 
 permissions:
@@ -22,6 +24,7 @@ jobs:
   lint-template:
     name: ${{ matrix.chart }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -59,10 +62,37 @@ jobs:
         run: helm lint "charts/${{ matrix.chart }}"
 
       - name: Render chart
-        run: helm template "dhi-${{ matrix.chart }}" "charts/${{ matrix.chart }}" >/tmp/rendered.yaml
+        run: |
+          helm template "dhi-${{ matrix.chart }}" "charts/${{ matrix.chart }}" >"${RUNNER_TEMP}/rendered.yaml"
+          ruby tests/charts/assert_render.rb \
+            --file "${RUNNER_TEMP}/rendered.yaml" \
+            --expected-repository "ghcr.io/peslaio/${{ matrix.chart }}"
 
       - name: Render OpenShift mode
-        run: helm template "dhi-${{ matrix.chart }}-openshift" "charts/${{ matrix.chart }}" --set openshift.enabled=true >/tmp/rendered-openshift.yaml
+        run: |
+          helm template "dhi-${{ matrix.chart }}-openshift" "charts/${{ matrix.chart }}" \
+            --set openshift.enabled=true >"${RUNNER_TEMP}/rendered-openshift.yaml"
+          ruby tests/charts/assert_render.rb \
+            --file "${RUNNER_TEMP}/rendered-openshift.yaml" \
+            --expected-repository "ghcr.io/peslaio/${{ matrix.chart }}" \
+            --openshift
 
       - name: Render NetworkPolicy mode
-        run: helm template "dhi-${{ matrix.chart }}-network-policy" "charts/${{ matrix.chart }}" --set networkPolicy.enabled=true >/tmp/rendered-network-policy.yaml
+        run: |
+          helm template "dhi-${{ matrix.chart }}-network-policy" "charts/${{ matrix.chart }}" \
+            --set networkPolicy.enabled=true >"${RUNNER_TEMP}/rendered-network-policy.yaml"
+          ruby tests/charts/assert_render.rb \
+            --file "${RUNNER_TEMP}/rendered-network-policy.yaml" \
+            --expected-repository "ghcr.io/peslaio/${{ matrix.chart }}" \
+            --network-policy
+
+      - name: Prove digest pinning overrides the tag
+        env:
+          TEST_DIGEST: sha256:1111111111111111111111111111111111111111111111111111111111111111
+        run: |
+          helm template "dhi-${{ matrix.chart }}-digest" "charts/${{ matrix.chart }}" \
+            --set-string image.tag=must-not-be-used \
+            --set-string "image.digest=${TEST_DIGEST}" >"${RUNNER_TEMP}/rendered-digest.yaml"
+          ruby tests/charts/assert_render.rb \
+            --file "${RUNNER_TEMP}/rendered-digest.yaml" \
+            --expected-image "ghcr.io/peslaio/${{ matrix.chart }}@${TEST_DIGEST}"

@@ -11,7 +11,7 @@ updateStrategy:
 
 image:
   registry: ghcr.io
-  repository: tpesla/dotnet-runtime
+  repository: peslaio/dotnet-runtime
   tag: 8.0-bookworm
   digest: ""
   pullPolicy: IfNotPresent

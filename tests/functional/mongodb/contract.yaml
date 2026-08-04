@@ -1,2 +1,17 @@
 schemaVersion: 1
 timeoutSeconds: 900
+assertionSuite: mongodb
+requiredAssertions:
+  - auth.application_ready
+  - auth.wrong_password_rejected
+  - replication.transaction_capable
+  - crud.insert_update_find
+  - crud.delete
+  - crud.idempotent_upsert
+  - index.unique
+  - transaction.commit
+  - transaction.abort
+  - query.aggregate
+  - authorization.user_admin_denied
+  - persistence.lifecycle_state
+  - state.final_summary

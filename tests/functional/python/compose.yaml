@@ -8,6 +8,9 @@ services:
         DHI_SOURCE_IMAGE_ID: ${DHI_SOURCE_IMAGE_ID:?set DHI_SOURCE_IMAGE_ID}
     pull_policy: never
     platform: ${DHI_PLATFORM:?set DHI_PLATFORM}
+    environment:
+      DHI_CONFIG_PATH: /app/app-config.json
+      DHI_APP_MODE: environment
     labels:
       io.pesla.dhi.functional.role: sut
       io.pesla.dhi.functional.identity-mode: derived-rootfs-prefix
@@ -24,7 +27,7 @@ services:
     pull_policy: never
     labels:
       io.pesla.dhi.functional.role: test
-    command: [http, --url, http://app:8080/, --contains, python-app-ok]
+    command: [http, --url, http://app:8080/, --contains, python-app-ok, --checks, "config-precedence,json,filesystem-tmp,dns,crypto,compression,encoding-timezone,worker-threads,native-libc,reflection,local-http"]
     depends_on: [app]
     read_only: true
     tmpfs: [/tmp]

@@ -16,9 +16,14 @@ services:
     labels:
       io.pesla.dhi.functional.role: sut
       io.pesla.dhi.functional.identity-mode: derived-rootfs-prefix
+    environment:
+      HOME: /tmp
     read_only: true
     volumes:
       - data:/data/db
+      - ./secrets/root-password.txt:/run/secrets/mongodb-root-password:ro
+      - ./secrets/app-password.txt:/run/secrets/mongodb-app-password:ro
+      - ./secrets/keyfile.txt:/run/secrets/mongodb-keyfile:ro
     tmpfs:
       - /run/mongodb:uid=10001,gid=0,mode=0770
       - /var/log/mongodb:uid=10001,gid=0,mode=0770
@@ -30,7 +35,11 @@ services:
     labels:
       io.pesla.dhi.functional.role: test
     depends_on: [app]
+    environment:
+      HOME: /tmp
     read_only: true
+    volumes:
+      - ./secrets/app-password.txt:/run/secrets/mongodb-app-password:ro
     tmpfs: [/tmp]
 
 volumes:

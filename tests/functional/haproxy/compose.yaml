@@ -1,5 +1,5 @@
 services:
-  backend:
+  backend-a:
     build:
       context: ../harness
       args:
@@ -7,9 +7,47 @@ services:
     pull_policy: never
     labels:
       io.pesla.dhi.functional.role: fixture
-    command: [serve, --port, "8080", --body, dhi-haproxy-proxy-ok]
+    command:
+      - serve
+      - --port
+      - "8080"
+      - --body
+      - dhi-haproxy-backend-a-ok
+      - --identity
+      - backend-a
+      - --control-token
+      - dhi-functional-control
     healthcheck:
-      test: [CMD, python, /harness/probe.py, http, --url, http://127.0.0.1:8080/, --contains, dhi-haproxy-proxy-ok, --timeout, "5"]
+      test: [CMD, python, /harness/probe.py, http, --url, http://127.0.0.1:8080/healthz, --contains, healthy, --timeout, "5"]
+      start_period: 10s
+      interval: 2s
+      timeout: 6s
+      retries: 5
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+  backend-b:
+    build:
+      context: ../harness
+      args:
+        PYTHON_IMAGE: ${DHI_FIXTURE_PYTHON_IMAGE:?set DHI_FIXTURE_PYTHON_IMAGE}
+    pull_policy: never
+    labels:
+      io.pesla.dhi.functional.role: fixture
+    command:
+      - serve
+      - --port
+      - "8080"
+      - --body
+      - dhi-haproxy-backend-b-ok
+      - --identity
+      - backend-b
+      - --control-token
+      - dhi-functional-control
+    healthcheck:
+      test: [CMD, python, /harness/probe.py, http, --url, http://127.0.0.1:8080/healthz, --contains, healthy, --timeout, "5"]
       start_period: 10s
       interval: 2s
       timeout: 6s
@@ -32,7 +70,9 @@ services:
       io.pesla.dhi.functional.role: sut
       io.pesla.dhi.functional.identity-mode: derived-rootfs-prefix
     depends_on:
-      backend:
+      backend-a:
+        condition: service_healthy
+      backend-b:
         condition: service_healthy
     read_only: true
     tmpfs:
@@ -48,8 +88,19 @@ services:
     pull_policy: never
     labels:
       io.pesla.dhi.functional.role: test
-    command: [http, --url, http://app:8080/, --contains, dhi-haproxy-proxy-ok]
-    depends_on: [app]
+    command:
+      - haproxy
+      - --base-url
+      - http://app:8080
+      - --backend-a
+      - http://backend-a:8080
+      - --backend-b
+      - http://backend-b:8080
+      - --control-token
+      - dhi-functional-control
+      - --timeout
+      - "90"
+    depends_on: [app, backend-a, backend-b]
     read_only: true
     tmpfs: [/tmp]
     cap_drop: [ALL]

@@ -1,2 +1,17 @@
 schemaVersion: 1
 timeoutSeconds: 900
+assertionSuite: postgresql
+requiredAssertions:
+  - auth.application_ready
+  - auth.wrong_password_rejected
+  - schema.ddl
+  - crud.insert_update_find
+  - crud.delete
+  - crud.idempotent_upsert
+  - transaction.commit
+  - transaction.rollback
+  - constraint.unique
+  - constraint.foreign_key
+  - authorization.role_admin_denied
+  - persistence.lifecycle_state
+  - state.final_summary

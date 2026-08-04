@@ -47,6 +47,7 @@ entrypoint:
   - /usr/sbin/haproxy
 
 cmd:
+  - -W
   - -f
   - /etc/haproxy/haproxy.conf
   - -db

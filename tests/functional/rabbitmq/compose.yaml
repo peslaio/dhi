@@ -15,6 +15,7 @@ services:
     read_only: true
     volumes:
       - data:/var/lib/rabbitmq
+      - ./secrets/app-password.txt:/run/secrets/rabbitmq-app-password:ro
     tmpfs:
       - /run/rabbitmq:uid=10001,gid=0,mode=0770
       - /var/log/rabbitmq:uid=10001,gid=0,mode=0770
@@ -28,11 +29,14 @@ services:
       args:
         PYTHON_IMAGE: ${DHI_FIXTURE_PYTHON_IMAGE:?set DHI_FIXTURE_PYTHON_IMAGE}
     pull_policy: never
+    entrypoint: [python, /harness/rabbitmq_verify.py]
     labels:
       io.pesla.dhi.functional.role: test
-    command: [rabbitmq, --host, app, --timeout, "180"]
     depends_on: [app]
     read_only: true
+    volumes:
+      - ./verify.py:/harness/rabbitmq_verify.py:ro
+      - ./secrets/app-password.txt:/run/secrets/rabbitmq-app-password:ro
     tmpfs: [/tmp]
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]

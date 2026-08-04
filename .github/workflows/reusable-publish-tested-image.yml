@@ -36,14 +36,14 @@ jobs:
     with:
       image_name: ${{ inputs.image_name }}
 
-  publish-architecture:
+  publish-candidate-architecture:
     needs: prepare
     permissions:
       actions: read
       contents: read
       id-token: write
       packages: write
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.debian_arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -133,27 +133,36 @@ jobs:
           username: ${{ secrets.registry_username || github.actor }}
           password: ${{ secrets.registry_password || github.token }}
 
-      - name: Push tested architecture image
+      - name: Push run-scoped candidate architecture image
         id: publish
         env:
           ARCH_TAG: ${{ steps.tested-image.outputs.architecture_tag }}
+          IMAGE_REF: ${{ steps.tested-image.outputs.image_ref }}
+          IMAGE_VERSION: ${{ matrix.version }}
+          DEBIAN_SUITE: ${{ matrix.debian_suite }}
+          DEBIAN_ARCH: ${{ matrix.debian_arch }}
         run: |
           set -euo pipefail
-          push_output="$(docker push "$ARCH_TAG" 2>&1)"
+          candidate_tag="${IMAGE_REF}:candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${IMAGE_VERSION}-${DEBIAN_SUITE}-${DEBIAN_ARCH}"
+          docker image tag "$ARCH_TAG" "$candidate_tag"
+          push_output="$(docker push "$candidate_tag" 2>&1)"
           printf '%s\n' "$push_output"
           digest="$(printf '%s\n' "$push_output" | sed -n 's/.*digest: \(sha256:[0-9a-f]\+\).*/\1/p' | tail -n 1)"
           if ! printf '%s\n' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
-            echo "Registry push did not report a valid immutable digest for $ARCH_TAG" >&2
+            echo "Registry push did not report a valid immutable digest for $candidate_tag" >&2
             exit 1
           fi
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          echo "Published tested image $ARCH_TAG@$digest"
+          {
+            echo "candidate_tag=$candidate_tag"
+            echo "digest=$digest"
+          } >> "$GITHUB_OUTPUT"
+          echo "Published tested candidate $candidate_tag@$digest"
 
       - name: Install cosign
         if: inputs.sign
         uses: sigstore/cosign-installer@v4.0.0
 
-      - name: Sign tested architecture digest
+      - name: Sign candidate architecture digest
         if: inputs.sign
         env:
           IMAGE_REF: ${{ steps.tested-image.outputs.image_ref }}
@@ -196,7 +205,204 @@ jobs:
             --run-id "$GITHUB_RUN_ID" \
             --run-attempt "$GITHUB_RUN_ATTEMPT"
 
-      - name: Upload immutable architecture digest
+      - name: Upload candidate architecture digest
+        uses: actions/upload-artifact@v7
+        with:
+          name: image-release-candidate-digest--${{ inputs.image_name }}--${{ matrix.version }}--${{ matrix.debian_suite }}--${{ matrix.debian_arch }}--attempt-${{ github.run_attempt }}
+          path: artifacts/published/${{ matrix.debian_arch }}.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  accept-candidate-architecture:
+    needs: [prepare, publish-candidate-architecture]
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    runs-on: ${{ matrix.debian_arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.build_matrix) }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Download candidate architecture digest
+        env:
+          # Upstream actions/download-artifact#484; keep other Node warnings visible.
+          NODE_OPTIONS: --disable-warning=DEP0005
+        uses: actions/download-artifact@v8
+        with:
+          name: image-release-candidate-digest--${{ inputs.image_name }}--${{ matrix.version }}--${{ matrix.debian_suite }}--${{ matrix.debian_arch }}--attempt-${{ github.run_attempt }}
+          path: artifacts/candidate
+
+      - name: Prepare candidate digest reference
+        id: candidate
+        env:
+          REGISTRY: ${{ inputs.registry }}
+          NAMESPACE: ${{ inputs.namespace }}
+        run: |
+          set -euo pipefail
+          namespace="${NAMESPACE:-$GITHUB_REPOSITORY_OWNER}"
+          image_ref="${REGISTRY}/${namespace}/${{ inputs.image_name }}"
+          image_ref="$(printf '%s' "$image_ref" | tr '[:upper:]' '[:lower:]')"
+          python3 tests/functional/releasectl.py manifest-sources \
+            --records artifacts/candidate \
+            --github-output "$GITHUB_OUTPUT" \
+            --image-name "${{ inputs.image_name }}" \
+            --image-version "${{ matrix.version }}" \
+            --debian-suite "${{ matrix.debian_suite }}" \
+            --debian-arches "${{ matrix.debian_arch }}" \
+            --image-ref "$image_ref" \
+            --repository "$GITHUB_REPOSITORY" \
+            --commit-sha "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
+
+      - name: Log in to registry for candidate pull
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ secrets.registry_username || github.actor }}
+          password: ${{ secrets.registry_password || github.token }}
+
+      - name: Install cosign
+        if: inputs.sign
+        uses: sigstore/cosign-installer@v4.0.0
+
+      - name: Verify candidate architecture signature
+        if: inputs.sign
+        env:
+          EVIDENCE_DIR: ${{ runner.temp }}/candidate-functional
+          SOURCE_REFS: ${{ steps.candidate.outputs.source_refs }}
+        run: |
+          set -euo pipefail
+          source_ref="$(printf '%s\n' "$SOURCE_REFS" | sed '/^$/d')"
+          identity_regex="$(python3 - <<'PY'
+          import os
+          import re
+
+          repository = re.escape(os.environ["GITHUB_REPOSITORY"])
+          print(rf"^https://github\.com/{repository}/\.github/workflows/[^@]+@refs/heads/main$")
+          PY
+          )"
+          mkdir -p "$EVIDENCE_DIR"
+          attempt=1
+          max_attempts=5
+          until cosign verify \
+              --certificate-identity-regexp "$identity_regex" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              --output json \
+              "$source_ref" > "$EVIDENCE_DIR/cosign-architecture.json"; do
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "Failed to verify $source_ref after $attempt attempts" >&2
+              exit 1
+            fi
+            delay=$((attempt * 15))
+            echo "Verification of $source_ref failed on attempt $attempt. Retrying in ${delay}s..." >&2
+            sleep "$delay"
+            attempt=$((attempt + 1))
+          done
+
+      - name: Pull and run candidate architecture digest natively
+        env:
+          DHI_FUNCTIONAL_ARTIFACT_DIR: ${{ runner.temp }}/candidate-functional
+          DHI_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}-candidate-${{ matrix.debian_arch }}
+          SOURCE_REFS: ${{ steps.candidate.outputs.source_refs }}
+        run: |
+          set -euo pipefail
+          source_ref="$(printf '%s\n' "$SOURCE_REFS" | sed '/^$/d')"
+          if [ "$(printf '%s\n' "$source_ref" | wc -l | tr -d ' ')" -ne 1 ]; then
+            echo "Expected exactly one candidate architecture reference" >&2
+            exit 1
+          fi
+          docker pull --platform "${{ matrix.platform }}" "$source_ref"
+          tests/functional/run.sh \
+            "${{ inputs.image_name }}" \
+            "$source_ref" \
+            "${{ matrix.version }}" \
+            "${{ matrix.platform }}"
+
+      - name: Upload candidate acceptance evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: image-release-candidate-acceptance--${{ inputs.image_name }}--${{ matrix.version }}--${{ matrix.debian_suite }}--${{ matrix.debian_arch }}--attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/candidate-functional
+          if-no-files-found: error
+          retention-days: 7
+
+  record-accepted-architecture:
+    needs: [prepare, accept-candidate-architecture]
+    permissions:
+      actions: read
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.build_matrix) }}
+
+    steps:
+      - name: Check out repository history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Download accepted candidate digest
+        env:
+          # Upstream actions/download-artifact#484; keep other Node warnings visible.
+          NODE_OPTIONS: --disable-warning=DEP0005
+        uses: actions/download-artifact@v8
+        with:
+          name: image-release-candidate-digest--${{ inputs.image_name }}--${{ matrix.version }}--${{ matrix.debian_suite }}--${{ matrix.debian_arch }}--attempt-${{ github.run_attempt }}
+          path: artifacts/published
+
+      - name: Resolve accepted immutable source
+        id: accepted
+        env:
+          REGISTRY: ${{ inputs.registry }}
+          NAMESPACE: ${{ inputs.namespace }}
+        run: |
+          set -euo pipefail
+          namespace="${NAMESPACE:-$GITHUB_REPOSITORY_OWNER}"
+          image_ref="${REGISTRY}/${namespace}/${{ inputs.image_name }}"
+          image_ref="$(printf '%s' "$image_ref" | tr '[:upper:]' '[:lower:]')"
+          python3 tests/functional/releasectl.py manifest-sources \
+            --records artifacts/published \
+            --github-output "$GITHUB_OUTPUT" \
+            --image-name "${{ inputs.image_name }}" \
+            --image-version "${{ matrix.version }}" \
+            --debian-suite "${{ matrix.debian_suite }}" \
+            --debian-arches "${{ matrix.debian_arch }}" \
+            --image-ref "$image_ref" \
+            --repository "$GITHUB_REPOSITORY" \
+            --commit-sha "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
+          echo "image_ref=$image_ref" >> "$GITHUB_OUTPUT"
+
+      - name: Reject newer release inputs on main
+        env:
+          IMAGE_NAME: ${{ inputs.image_name }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin refs/heads/main
+          main_sha="$(git rev-parse FETCH_HEAD)"
+          test "$(printf '%s' "$main_sha" | wc -c | tr -d ' ')" -eq 40
+          git merge-base --is-ancestor "$GITHUB_SHA" "$main_sha"
+          if [ "$main_sha" != "$GITHUB_SHA" ]; then
+            changed_files="$RUNNER_TEMP/dhi-newer-main-paths.txt"
+            git log --format= --name-only --no-renames "$GITHUB_SHA..$main_sha" \
+              | sed '/^$/d' | sort -u > "$changed_files"
+            python3 tests/functional/releasectl.py guard-current \
+              --image-name "$IMAGE_NAME" --changed-files "$changed_files"
+          fi
+
+      - name: Upload accepted immutable architecture digest
         uses: actions/upload-artifact@v7
         with:
           name: image-release-digest--${{ inputs.image_name }}--${{ matrix.version }}--${{ matrix.debian_suite }}--${{ matrix.debian_arch }}--attempt-${{ github.run_attempt }}
@@ -206,7 +412,7 @@ jobs:
           compression-level: 0
 
   publish-manifest:
-    needs: [prepare, publish-architecture]
+    needs: [prepare, record-accepted-architecture]
     permissions:
       actions: read
       contents: read

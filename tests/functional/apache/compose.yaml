@@ -25,7 +25,16 @@ services:
     pull_policy: never
     labels:
       io.pesla.dhi.functional.role: test
-    command: [http, --url, http://app:8080/, --contains, dhi-apache-app-ok]
+    command:
+      - web
+      - --base-url
+      - http://app:8080
+      - --marker
+      - dhi-apache-app-ok
+      - --concurrency
+      - "8"
+      - --timeout
+      - "90"
     depends_on: [app]
     read_only: true
     tmpfs: [/tmp]

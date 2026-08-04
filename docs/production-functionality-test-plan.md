@@ -1,10 +1,10 @@
 # Production Functionality Acceptance Plan
 
-Status: planning only. This document defines proposed acceptance scenarios; it does not add test code, fixtures, workflows, registry promotion, or a production guarantee.
+Status: target acceptance plan with a bounded baseline implemented as of 2026-08-04. The scenarios below remain the full target; completion of the baseline does not provide a production guarantee.
 
 ## Goal And Claim Boundary
 
-A passing current contract proves that the declared CI leg performed one representative operation under its recorded identity mode: Redis and Memcached execute the unchanged exact local image, while the other suites execute a derived application whose rootfs layers have the exact local source image as their prefix. The target is a stronger, auditable claim for each exact image digest:
+A passing current contract proves that the declared CI leg emitted the exact required assertion set, survived a host-controlled graceful stop and same-container restart, and emitted the same complete assertion set again under its recorded identity mode. Redis and Memcached execute the unchanged exact image, while the other suites execute a derived application whose rootfs layers have the exact source image as their prefix. The target remains a stronger, auditable claim for each exact image digest:
 
 > For the declared family, version, platform, configuration, and capability set, every required positive, negative, lifecycle, and published-artifact scenario passed with complete evidence.
 
@@ -12,30 +12,42 @@ No finite suite can prove that every possible application, configuration, input,
 
 This plan extends the L0-L2 design in [testing.md](testing.md) and the identity and evidence rules in [ADR 0001](adr/0001-functional-image-contracts.md). It does not replace them.
 
+## Implemented Baseline And Remaining Boundary
+
+The repository implements these parts of the plan:
+
+- machine-validated family assertion suites with exact required IDs, structured summaries, exact-set aggregation, typed failures, durable evidence, and negative control-plane tests;
+- real application, protocol, authentication/authorization, failure, concurrency, and state checks described in [testing.md](testing.md#functional-contract-matrix);
+- host-side `SIGTERM`, bounded exit, same-container restart, second semantic probe, and running-service checks for every suite; Redis proves AOF state survives and Memcached proves its cache does not;
+- run-scoped signed architecture candidates, native digest pull and contract rerun, a signed candidate index, native member-selection proof and second contract rerun, followed by stable promotion;
+- render-time Helm gates for the canonical `ghcr.io/peslaio` repositories, digest references, normal mode, OpenShift mode, and NetworkPolicy mode.
+
+The baseline does not yet prove readiness withdrawal or in-flight drain, TLS profiles, crash/SIGKILL recovery, backup/restore, previous-digest or version upgrades, distributed failover, OCI-attached SBOM/provenance, stable-tag native pulls after promotion, Kubernetes runtime behavior, soak/performance SLOs, lifecycle eligibility, or operational support. Those scenarios remain required where the capability contract makes them applicable.
+
 ## Current Scope
 
 The repository currently has 20 image specifications, 16 family suites, and 35 native platform legs.
 
 | Family | Declared version | Native platforms | Current representative contract |
 | --- | --- | --- | --- |
-| `apache` | 2.4 | amd64, arm64 | Serve static content over HTTP. |
-| `caddy` | 2 | amd64, arm64 | Serve configured static content over HTTP. |
-| `haproxy` | 2.6 | amd64, arm64 | Proxy one HTTP request to a backend. |
-| `nginx` | 1.22 | amd64, arm64 | Serve static content over HTTP. |
-| `php-fpm` | 8.2 | amd64, arm64 | Execute PHP through Nginx and FastCGI and check extension presence. |
-| `memcached` | 1.6 | amd64, arm64 | Execute `VERSION`, `SET`, and `GET`. |
-| `redis` | 7.0 | amd64, arm64 | Execute `PING`, `SET`, and `GET`. |
-| `node` | 18 | amd64, arm64 | Run a repository-owned HTTP server. |
-| `python` | 3.11 | amd64, arm64 | Run a standard-library HTTP server. |
-| `java-jre` | 17 | amd64, arm64 | Compile and run one HTTP class. |
-| `dotnet-runtime` | 8.0, 9.0, 10.0 | 8/9 amd64; 10 amd64, arm64 | Run a framework-dependent TCP application. |
-| `dotnet-aspnet` | 8.0, 9.0, 10.0 | 8/9 amd64; 10 amd64, arm64 | Run a minimal ASP.NET endpoint. |
-| `mariadb` | 10.11 | amd64, arm64 | Initialize an untrusted test instance and perform SQL write/read. |
-| `postgresql` | 15 | amd64, arm64 | Initialize a trust-auth test cluster and perform SQL write/read. |
-| `mongodb` | 8.0 | amd64 | Run an unauthenticated standalone instance and perform insert/find. |
-| `rabbitmq` | 3.10 | amd64, arm64 | Enable management in a child fixture and publish/consume through its HTTP API. |
+| `apache` | 2.4 | amd64, arm64 | Static HTTP semantics, negative paths, and concurrency. |
+| `caddy` | 2 | amd64, arm64 | Static HTTP semantics plus reverse-proxy identity and forwarding. |
+| `haproxy` | 2.6 | amd64, arm64 | Balancing, single/all-backend failure, and recovery. |
+| `nginx` | 1.22 | amd64, arm64 | Static HTTP semantics plus reverse-proxy identity and forwarding. |
+| `php-fpm` | 8.2 | amd64, arm64 | Exact extension inventory and real FastCGI application paths including session, upload, error, and concurrency. |
+| `memcached` | 1.6 | amd64, arm64 | Core protocol, CAS, TTL, malformed/oversized input, concurrency, and empty restart state. |
+| `redis` | 7.0 | amd64, arm64 | ACL/auth, TTL, transaction, concurrency, denied administration, and AOF state after restart. |
+| `node` | 18 | amd64, arm64 | HTTP application with independently required runtime subsystem checks. |
+| `python` | 3.11 | amd64, arm64 | HTTP application with independently required runtime subsystem checks. |
+| `java-jre` | 17 | amd64, arm64 | Compiled HTTP application with independently required JRE subsystem checks. |
+| `dotnet-runtime` | 8.0, 9.0, 10.0 | 8/9 amd64; 10 amd64, arm64 | Offline-built framework-dependent application with independently required runtime subsystem checks. |
+| `dotnet-aspnet` | 8.0, 9.0, 10.0 | 8/9 amd64; 10 amd64, arm64 | Runtime checks plus Generic Host, routing, validation, streaming, and local HTTP. |
+| `mariadb` | 10.11 | amd64, arm64 | Authenticated least-privilege DDL/CRUD/transaction/constraint checks and restart persistence. |
+| `postgresql` | 15 | amd64, arm64 | Password-authenticated least-privilege DDL/CRUD/transaction/constraint checks and restart persistence. |
+| `mongodb` | 8.0 | amd64 | Authenticated replica-set CRUD/index/transaction/aggregation checks and restart persistence. |
+| `rabbitmq` | 3.10 | amd64, arm64 | Non-guest authorization, durable topology, persistent publish, requeue/ack/unroutable behavior, and restart state. |
 
-These contracts remain valuable release smoke tests. Passing them does not retroactively satisfy the scenarios below.
+These contracts are blocking bounded acceptance tests, not mere process smoke tests. Passing them satisfies only the assertions named in their checked-in contracts; it does not retroactively satisfy the remaining scenarios below.
 
 ## Current Runtime Lifecycle Gate
 
@@ -107,15 +119,15 @@ Every family inherits these scenarios. A family section may strengthen or explic
 
 ## Candidate-Digest Promotion Flow
 
-The current publisher verifies the tested archive and signs the resulting architecture and manifest digests, but it does not pull and execute the registry object. The target flow is:
+The publisher now implements the core candidate flow. The remaining attachment and atomicity gaps are called out inline:
 
 1. Complete local release acceptance and export the exact tested architecture image.
-2. Push run-scoped candidate architecture tags, resolve each immutable `platformManifestDigest`, attach the required per-platform SBOM/provenance, sign the digest, and verify signature identity, issuer, and attachment subjects without moving public stable tags.
+2. Push run-scoped candidate architecture tags, resolve each immutable `platformManifestDigest`, sign the digest, and verify signature identity and issuer without moving public stable tags. Per-platform OCI-attached SBOM/provenance and attachment-subject verification remain unimplemented.
 3. On each native platform, pull the platform manifest by digest and prove that its platform, OCI revision, runtime identity, and digest match the publisher record. Pulling this single-platform object does not exercise index selection.
 4. Rerun a short real-consumer contract from the pulled platform digest. Derived application fixtures must retain explicit source-layer identity; service primitives should run the pulled image directly with mounted configuration or launcher.
-5. Assemble a candidate index only from the accepted platform digests, resolve its `indexDigest`, apply the declared index-level SBOM/provenance or attestation policy, sign it, and verify identity, issuer, and subjects.
+5. Assemble a candidate index only from the accepted platform digests, resolve its `indexDigest`, sign it, and verify identity and issuer. Index-level SBOM/provenance or attestation policy remains unimplemented.
 6. Pull the candidate index by digest on every declared native platform and prove that registry selection resolves to the already accepted `platformManifestDigest` for that platform.
-7. Move all supported mutable public tags only after acceptance: `version-suite` and, while the product exposes them, `version-suite-{arch}`. Re-resolve every moved tag and require the accepted index or platform digest. Alternatively retire stable architecture tags explicitly.
+7. Move all supported mutable public tags only after acceptance: `version-suite-{arch}` first and `version-suite` last as the release commit marker. Re-resolve every moved tag and require the accepted index or platform digest. GHCR offers no atomic multi-tag transaction, so a failure can partially advance architecture convenience tags while leaving the primary index unchanged; retiring those tags or defining automated reconciliation remains open.
 8. Leave a failed candidate unpromoted.
 
 ## Evidence And Pass Rules
@@ -211,7 +223,7 @@ Scheduled assurance:
 - drain or reload under traffic without losing accepted connections;
 - exercise slow, flapping, and failing backends, `maxconn` saturation, and TLS handshake load.
 
-Claim boundary: the current `-db` process model does not by itself define seamless reload. A supported master-worker or external replacement strategy must be declared before zero-downtime reload can be promised.
+Claim boundary: the current `-W -db` master-worker process model enables a clean PID 1 shutdown test but does not by itself define seamless configuration reload. A supported reload or external replacement strategy must be declared before zero-downtime reload can be promised.
 
 ### Nginx 1.22
 
@@ -437,7 +449,7 @@ Scheduled assurance:
 
 - repeat the declared replication/failover sentinel and exercise backup/restore, ENOSPC, permission, corruption-marker, and multi-hour constrained-resource behavior.
 
-Current blocker: the raw image defaults to a version command and the present functional launcher disables grants. The chart does not provide a complete credential/init-once contract.
+Current blocker: the functional fixture now bootstraps a password-authenticated least-privileged account and proves restart persistence, but the raw image still defaults to a version command. The chart does not provide a complete supported credential/init-once, TLS, backup/restore, or upgrade contract.
 
 ### PostgreSQL 15
 
@@ -460,7 +472,7 @@ Scheduled assurance:
 
 - repeat the declared replication/recovery sentinel and exercise ENOSPC, permission failures, and constrained-resource soak.
 
-Current blocker: the functional fixture uses trust authentication. The chart can default to host trust when the password is empty, consumes `POSTGRES_PASSWORD` through the environment instead of exposing a launcher-supported file-based secret contract, and does not include its optional PostgreSQL config mount in the startup command.
+Current blocker: the functional fixture now bootstraps password authentication, rejects a wrong password, restricts role administration, and proves restart persistence. The chart can still default to host trust when the password is empty, consumes `POSTGRES_PASSWORD` through the environment instead of exposing a launcher-supported file-based secret contract, and does not include its optional PostgreSQL config mount in the startup command. TLS, crash recovery, backup/restore, and upgrade remain unproved.
 
 ### MongoDB 8.0
 
@@ -483,7 +495,7 @@ Scheduled assurance:
 
 - repeat the declared election/transaction sentinel and exercise ENOSPC and constrained-resource soak.
 
-Current blocker: the raw image defaults to a version command and current functional coverage is unauthenticated standalone CRUD. The chart's replica-set launcher lacks auth/keyfile and can leave the process running after initialization retries are exhausted.
+Current blocker: the functional fixture now bootstraps authenticated users on a single-member transaction-capable replica set, rejects a wrong password and user administration, and proves restart persistence. The raw image still defaults to a version command; the chart's replica-set launcher lacks the supported auth/keyfile/TLS contract and can leave the process running after initialization retries are exhausted. Crash recovery, backup/restore, upgrade, and multi-member behavior remain unproved.
 
 ### RabbitMQ 3.10
 
@@ -505,7 +517,7 @@ Scheduled assurance:
 
 - repeat the declared quorum failover sentinel and exercise network partition, resource alarms, and constrained-resource soak.
 
-Current blocker: the [current scorecard](image-quality-scorecard.md) marks RabbitMQ 3.10 EOL. The base image does not enable management, while the functional child does and the chart currently exposes its port. The chart also lacks a non-guest credential/definitions bootstrap, TLS contract, and mounted shared-cookie contract, so it is not yet a usable production launcher. Positive tests cannot override the lifecycle block.
+Current blocker: the [current scorecard](image-quality-scorecard.md) marks RabbitMQ 3.10 EOL. The functional child now bootstraps a non-guest user/vhost, verifies scoped authorization and durable messaging behavior, and proves a lifecycle marker survives graceful restart. The base image does not enable management, while the functional child does and the chart currently exposes its port. The chart still lacks a supported credential/definitions, TLS, and mounted shared-cookie contract, so it is not yet a usable production launcher. Positive tests cannot override the lifecycle block.
 
 ## Kubernetes And Chart Acceptance
 
@@ -521,27 +533,27 @@ Chart success must not be inferred from image success. If a chart is part of the
 
 Application-runtime charts whose defaults only sleep or omit probes remain scaffolding until a real derived application is supplied. Stateful chart launcher behavior is release-blocking when the raw image is marketed as a runtime primitive plus chart.
 
-Current blocker: every chart defaults to `ghcr.io/tpesla/<family>`, while this repository currently publishes under `ghcr.io/peslaio/<family>`. A digest override does not repair a wrong repository name, so default and candidate rendering must both be corrected and tested before chart promotion.
+Current baseline: every chart now defaults to `ghcr.io/peslaio/<family>`, and CI renders and validates normal, OpenShift, NetworkPolicy, and digest-reference modes. No chart is installed in a conformance cluster yet, so runtime identity, probes, arbitrary-UID execution, network enforcement, persistence, disruption, rolling update, and failover remain unproved.
 
-## Planned Delivery Sequence
+## Delivery Sequence Status
 
-1. Define versioned capability contracts and explicit exclusions for all 20 specifications.
-2. Define scenario IDs, structured result fields, exact-set aggregation, secret redaction, and host-controlled lifecycle phases.
-3. Spike three orchestration shapes before multiplying fixtures: PHP-FPM for a derived application and trusted FastCGI boundary; Redis for exact-image persistence/auth/lifecycle; HAProxy for host-controlled dependency failure and TLS.
-4. Extend the pattern to the remaining stateless web, cache, and language-runtime families.
-5. Resolve the database runtime-primitive versus service-image boundary, then add secure initialization, restart/recovery, and backup/restore.
-6. Add run-scoped candidate publication, native digest pull/run, attached evidence verification, and stable-tag promotion.
-7. Add controlled-runner soak/performance baselines, upgrade matrices, distributed failure tests, and Kubernetes promotion.
-8. Add deliberate negative fixtures for every common and family-specific gate before relying on it for promotion.
+1. Define versioned capability contracts and explicit exclusions for all 20 specifications. **Partial:** exact assertion IDs exist, but complete supported/excluded product surfaces do not.
+2. Define scenario IDs, structured result fields, exact-set aggregation, secret redaction, and host-controlled lifecycle phases. **Partial:** assertion IDs, structured results, exact-set aggregation, and lifecycle phases are implemented; a general evidence secret-leak/redaction gate remains.
+3. Spike PHP-FPM, Redis, and HAProxy orchestration shapes. **Baseline implemented:** PHP real application, Redis persistence/auth, and HAProxy dependency failure/recovery; TLS and in-flight drain remain.
+4. Extend the pattern to the remaining stateless web, cache, and language-runtime families. **Baseline implemented** for the current checked-in assertions.
+5. Resolve the database runtime-primitive versus service-image boundary, then add secure initialization, restart/recovery, and backup/restore. **Partial:** authenticated functional launchers and graceful persistence checks exist; the product boundary, crash recovery, backup/restore, and upgrades remain.
+6. Add run-scoped candidate publication, native digest pull/run, attached evidence verification, and stable-tag promotion. **Partial:** candidate architecture/index pull-run, signing, identity verification, and promotion exist; OCI attachments, post-promotion pulls, and atomic/reconciled multi-tag promotion remain.
+7. Add controlled-runner soak/performance baselines, upgrade matrices, distributed failure tests, and Kubernetes promotion. **Not implemented.**
+8. Add deliberate negative fixtures for every common and family-specific gate before relying on it for promotion. **Partial:** control-plane and application negative paths exist, but every L0/family gate does not yet have an injected violating fixture.
 
-## Open Decisions Before Implementation
+## Remaining Open Decisions
 
 - Exact capability and exclusion list for every version, especially retained web-server modules and language native-extension support.
 - Whether each database is a runtime primitive plus supported launcher/chart or a drop-in service image.
 - Reference applications, clients, dependency locks, and fixture ownership for each ecosystem.
 - Graceful deadlines, correctness burst sizes, controlled-runner resource profiles, soak duration, and versioned performance SLOs.
 - Supported upgrade source versions, backup formats, and data-loss semantics.
-- Candidate registry/tag namespace and atomic stable-tag promotion procedure.
+- Whether stable architecture convenience tags should be retired or reconciled after a partial promotion; the run-scoped candidate namespace and primary-index-last commit marker are implemented.
 - OCI attachment format and verification policy for SBOM and provenance.
 - Lifecycle/EOL policy, rebuild cadence, evidence freshness, exception ownership, and support response SLA.
 - Which Helm charts are part of the production-supported product rather than examples.

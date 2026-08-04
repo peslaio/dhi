@@ -17,7 +17,7 @@ The test system also needs to prevent three forms of false confidence:
 
 ### Authorities
 
-`images/**/image.yaml` is the only authority for image family, version, Debian suite, and supported architectures. Each family has one `tests/functional/<family>/contract.yaml` containing only versioned execution policy such as the wall-clock timeout. Versions and platforms are not repeated in contract metadata.
+`images/**/image.yaml` is the only authority for image family, version, Debian suite, and supported architectures. Each family has one `tests/functional/<family>/contract.yaml` containing the wall-clock timeout, assertion-suite name, and exact required assertion IDs. Versions and platforms are not repeated in contract metadata.
 
 The common discovery tool joins these files by the image `name`. It validates the inventory and emits build and manifest matrices at workflow runtime. Generated matrices are not committed.
 
@@ -31,7 +31,7 @@ Every family provides a Docker Compose topology with these fixed roles:
 
 The contract must perform representative application behavior. Examples include serving a PHP application through FastCGI, publishing and consuming a RabbitMQ message, and writing and reading database state.
 
-The common runner owns isolation, a true wall-clock deadline, immutable local image aliases, evidence capture, teardown, result classification, and canonical JSON output. Compose shutdown grace is not used as the execution deadline.
+The common runner owns isolation, a true wall-clock deadline, immutable local image aliases, evidence capture, teardown, result classification, and canonical JSON output. A host-side controller accepts exactly one structured assertion summary whose IDs equal the family contract, signals the SUT PID 1, requires a bounded allowed exit, restarts the same container, and repeats the verifier and exact assertion-set check. Compose shutdown grace is not used as the execution deadline, and the Docker socket is not mounted into a verifier.
 
 ### Image identity
 
@@ -55,7 +55,7 @@ Each expected `(family, version, platform)` leg must upload one terminal `result
 - runner or container infrastructure failure;
 - evidence or cleanup failure.
 
-Logs, rendered Compose configuration, service state, container/image identity, and cleanup status are captured before resources are removed. A passing result is accepted only when the structured identity, Docker inspect, Compose state, and fixture-lock evidence parses and agrees with the result envelope.
+Logs, rendered Compose configuration, assertion contract and summaries, lifecycle state, container/image identity, and cleanup status are captured before resources are removed. A passing result is accepted only when the structured assertions, lifecycle phases, identity, Docker inspect, Compose state, and fixture-lock evidence parse and agree with the result envelope. Every non-test service must still be running cleanly after both verifier phases.
 
 ### GitHub Actions gate
 
@@ -69,7 +69,8 @@ Publishing is explicitly disabled for centrally orchestrated validation. ADR 000
 
 - A declared architecture cannot silently skip its application contract.
 - Pull requests test the local image produced in that job without registry credentials.
-- Failures are diagnosable from durable, structured evidence.
+- Failures are diagnosable from durable, structured evidence, and a removed assertion cannot leave the same capability claim green.
+- Every application contract proves a host-controlled graceful stop and same-container restart in addition to its initial behavior.
 - Image metadata no longer drifts from a second committed workflow matrix.
 - Derived fixtures remain necessary for compiled applications and some configuration-heavy services; their weaker identity mode is visible in evidence.
 - The system adds CI orchestration and artifact storage, and native Arm runner availability becomes a fail-closed dependency.
@@ -77,7 +78,7 @@ Publishing is explicitly disabled for centrally orchestrated validation. ADR 000
 
 ## Deferred work
 
-This decision does not provide post-publication digest pulls, OCI-attached SBOM/provenance validation, stateful upgrade and restore testing, Kubernetes lifecycle tests, or production promotion policy. Those are later gates and must not be inferred from a passing image-level contract. The read-only pull-request build graph was added by ADR 0002.
+This decision does not provide OCI-attached SBOM/provenance validation, stateful upgrade and restore testing, Kubernetes lifecycle tests, or a production support policy. ADR 0002's release flow now pulls and reruns these contracts from run-scoped architecture and index candidate digests, but that extension does not broaden the assertions defined here. The missing gates must not be inferred from a passing image-level contract.
 
 ## Alternatives considered
 

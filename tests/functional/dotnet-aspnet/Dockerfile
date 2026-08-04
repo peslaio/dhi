@@ -5,10 +5,14 @@ ARG DOTNET_SDK_IMAGE=scratch
 FROM --platform=$BUILDPLATFORM ${DOTNET_SDK_IMAGE} AS build
 ARG DOTNET_VERSION
 WORKDIR /src
-COPY AspNetProbe.csproj Program.cs ./
-RUN dotnet publish AspNetProbe.csproj \
+COPY NuGet.Config AspNetProbe.csproj Program.cs appsettings.json ./
+RUN dotnet restore AspNetProbe.csproj \
+      --configfile NuGet.Config \
+      -p:DhiTargetFramework=${DOTNET_VERSION} \
+    && dotnet publish AspNetProbe.csproj \
       --configuration Release \
       --output /out \
+      --no-restore \
       --no-self-contained \
       -p:DhiTargetFramework=${DOTNET_VERSION}
 
@@ -16,6 +20,5 @@ FROM ${RUNTIME_IMAGE}
 ARG DHI_SOURCE_IMAGE_ID=unknown
 LABEL io.pesla.dhi.functional.source-image-id="${DHI_SOURCE_IMAGE_ID}"
 COPY --from=build --chown=10001:0 /out/ /app/
-ENV ASPNETCORE_URLS=http://0.0.0.0:8080 \
-    DOTNET_EnableDiagnostics=0
+ENV DOTNET_EnableDiagnostics=0
 CMD ["/usr/bin/dotnet", "/app/AspNetProbe.dll"]

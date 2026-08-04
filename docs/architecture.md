@@ -46,20 +46,22 @@ family workflow -> reusable-build-debian-image.yml (read-only)
 reusable-publish-tested-image.yml (packages/OIDC write)
         |
         +-- verify same-run provenance, archive digest, platform, and image ID
-        +-- push architecture tag + keyless cosign signature
-        +-- wait for every expected architecture
+        +-- push run-scoped architecture candidate + keyless cosign signature
+        +-- verify signer identity/issuer and rerun the contract from the native digest
+        +-- record only accepted immutable architecture digests
         |
         v
 reusable-publish-image-manifest.yml (packages/OIDC write)
         |
-        +-- combine verified native amd64 and arm64 digest references
-        +-- publish version-suite manifest
-        +-- keyless cosign signature on manifest digest
+        +-- combine accepted native digests into a run-scoped candidate index
+        +-- sign the index and prove native member selection on every platform
+        +-- rerun the contract from the candidate index digest
+        +-- promote architecture convenience tags, then the version-suite index tag
 ```
 
 Each image family has its own workflow. The workflows pass image-specific package roots, files, command, user, ports, and test settings to the reusable builder. This keeps CI ownership visible while sharing the build implementation.
 
-The files under `images/**/image.yaml` are the authority for family, version, Debian suite, and supported architectures. `tests/functional/contractctl.rb` joins them to one family-level `contract.yaml`, validates the complete inventory, and generates uncommitted build and manifest matrices. Family workflows still own package and rootfs-construction inputs; those details have not yet moved into executable image metadata.
+The files under `images/**/image.yaml` are the authority for family, version, Debian suite, and supported architectures. Each family-level `contract.yaml` owns its timeout, assertion-suite name, and exact required assertion IDs. `tests/functional/contractctl.rb` joins those sources, validates the complete inventory, and generates uncommitted build and manifest matrices. Family workflows still own package and rootfs-construction inputs; those details have not yet moved into executable image metadata.
 
 Test fixture base images are recorded by tag and multi-platform digest in `tests/functional/fixtures.lock.json`. The runner passes those immutable references into Docker builds, and scheduled control-plane validation checks their declared amd64 and arm64 index coverage online.
 
@@ -90,10 +92,11 @@ This profile is a hardened Debian image construction method, not a distroless-eq
 5. The image is built from `scratch` with exact `USER uid:gid` metadata.
 6. Static checks reject UID 0, identity mismatch, missing runtime-closure Debian OS/package identity, forbidden package records, configured allowlist drift, APT executables, setuid/setgid files, file capabilities, and common shell executables when shell removal is enabled.
 7. A smoke test validates process startup, command output, TCP, or HTTP behavior.
-8. A Compose application contract builds or configures a representative consumer and exercises an application-level operation. The common runner proves the local source-image identity, applies a wall-clock deadline, captures evidence before teardown, and emits a canonical result.
+8. A Compose application contract builds or configures a representative consumer and exercises an explicit set of application assertions. A host controller then signals PID 1, requires a bounded exit, restarts the same container, repeats the exact assertion set, and proves every long-lived service remains running. The common runner binds this lifecycle evidence to the local source-image identity and canonical result.
 9. Syft emits an SPDX JSON SBOM. Trivy emits a full JSON package report and gates fixable HIGH and CRITICAL vulnerabilities. A separate validator binds that report to the tested image tag and image ID, requires Debian OS metadata and a non-empty `os-pkgs` result, and requires runtime-closure packages to equal the declared allowlist. Scan failure, missing evidence, or missing coverage blocks export.
 10. A release build saves the tested architecture image as a short-lived same-run artifact. Metadata binds the archive digest and size to the repository, commit, run attempt, image ID, version, suite, and platform.
-11. A separate write-scoped publisher verifies and loads that archive, pushes and signs the architecture digest, and then assembles and signs the multi-architecture manifest. Pull-request and merge-queue graphs never receive package or OIDC write capability.
+11. A separate write-scoped publisher verifies and loads that archive, pushes and signs a run-scoped architecture candidate, verifies its keyless signer identity, and reruns the application/lifecycle contract from the immutable digest on its native platform.
+12. Only accepted architecture digests form a signed candidate index. Native runners prove index-to-platform selection and rerun the contract from the index digest before stable architecture tags and, last, the version-suite index tag move. Pull-request and merge-queue graphs never receive package or OIDC write capability.
 
 ## Security Boundaries
 
@@ -124,7 +127,9 @@ Non-root metadata does not prevent a Kubernetes workload from overriding the use
 - Setuid/setgid mode bits and Linux file capabilities are stripped from the final runtime rootfs and verified absent.
 - Exact package allowlists make dependency drift visible for closure images.
 - Every image family has an application-level contract, including data write/read operations for stateful services.
+- Assertion summaries are exact-set checked before and after a host-controlled graceful stop and same-container restart; a missing assertion cannot silently shrink the claim.
 - Native amd64 and arm64 runners test the platform that will be published.
+- Run-scoped registry candidates and their assembled index are pulled by digest and retested on every declared native platform before stable promotion.
 - SBOM generation, fail-closed vulnerability coverage, retained scan evidence, and keyless signing are part of the common workflow.
 - Read-only validation is structurally separate from registry login, push, and OIDC signing; release publication consumes the exact image archive that passed the gates.
 - Separate image workflows provide clear ownership and failure isolation while retaining a common implementation.
@@ -142,6 +147,8 @@ Third-party APT keys are downloaded during the build without a declared fingerpr
 The SPDX SBOM and bound Trivy JSON report are uploaded as workflow artifacts but are not attached to the OCI digest. There is no SLSA provenance or in-toto build attestation. Consumers therefore cannot retrieve all evidence from the image reference alone.
 
 Trivy coverage is validated for Debian OS packages before export, gates HIGH and CRITICAL vulnerabilities, and ignores unfixed findings. It does not currently gate secrets, configuration findings, licenses, or a policy-defined age for ignored vulnerabilities.
+
+Candidate architecture and index digests are signed, signer identity and issuer are verified, and the objects are pulled and retested natively. The stable tag move is nevertheless not a multi-tag transaction: architecture convenience tags move sequentially and the version-suite index moves last. A registry failure can therefore leave partial architecture-tag advancement while the primary index still identifies the previous release.
 
 ### Version lifecycle is weak
 
@@ -169,10 +176,11 @@ The functional-contract portion now has a validated specification join, generate
 
 1. Move package roots, runtime profile, identity, ports, writable paths, and trusted-key fingerprints into an executable versioned image schema.
 2. Pin remaining third-party actions by commit and verify third-party APT key fingerprints before trust.
-3. Attach SBOMs and SLSA provenance to the immutable OCI digest.
-4. Pull and verify final manifest entries on native platforms after publication.
-5. Add lifecycle automation for upstream releases, Debian support coverage, scheduled rebuilds, and deprecation.
-6. Promote an image through explicit maturity states: experimental, candidate, and production-supported.
+3. Attach SBOMs and SLSA provenance to the immutable OCI digest and verify their subjects during candidate acceptance.
+4. Add post-promotion stable-tag pull evidence and an operational reconciliation procedure for partial multi-tag promotion.
+5. Extend graceful restart into readiness-withdrawal, in-flight drain, crash recovery, backup/restore, and supported upgrade scenarios where applicable.
+6. Add lifecycle automation for upstream releases, Debian support coverage, scheduled rebuilds, and deprecation.
+7. Promote an image through explicit maturity states: experimental, candidate, and production-supported.
 
 ## Production Decision
 

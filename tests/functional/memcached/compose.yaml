@@ -18,7 +18,7 @@ services:
     pull_policy: never
     labels:
       io.pesla.dhi.functional.role: test
-    command: [memcached, --host, app]
+    command: [memcached, --host, app, --concurrency, "32"]
     depends_on: [app]
     read_only: true
     tmpfs: [/tmp]

@@ -51,10 +51,10 @@ jobs:
       exposed_ports: "6379"
       config_path: images/redis/redis.conf
       writable_paths: /data /run/redis /var/lib/redis
-      smoke_mode: ${{ matrix.debian_arch == 'arm64' && 'oneshot' || 'running' }}
+      smoke_mode: running
       smoke_tcp_port: "6379"
-      smoke_command: ${{ matrix.debian_arch == 'arm64' && '--version' || '/usr/bin/redis-cli ping' }}
-      smoke_expected_output: ${{ matrix.debian_arch == 'arm64' && 'Redis server' || 'PONG' }}
+      smoke_command: /usr/bin/redis-cli ping
+      smoke_expected_output: PONG
       remove_shell: true
       export_image: ${{ inputs.export_image }}
       generate_sbom: true

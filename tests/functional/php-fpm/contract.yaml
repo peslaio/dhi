@@ -1,2 +1,43 @@
 schemaVersion: 1
 timeoutSeconds: 600
+assertionSuite: php
+requiredAssertions:
+  - php.ready
+  - php.inventory.json
+  - php.inventory.extension-set
+  - php.extension.calendar
+  - php.extension.ctype
+  - php.extension.exif
+  - php.extension.ffi
+  - php.extension.fileinfo
+  - php.extension.ftp
+  - php.extension.gettext
+  - php.extension.iconv
+  - php.extension.pdo
+  - php.extension.phar
+  - php.extension.posix
+  - php.extension.readline
+  - php.extension.shmop
+  - php.extension.sockets
+  - php.extension.sysvmsg
+  - php.extension.sysvsem
+  - php.extension.sysvshm
+  - php.extension.tokenizer
+  - php.extension.zend-opcache
+  - php.inventory.runtime
+  - php.inventory.opcache
+  - php.autoload.json
+  - php.autoload.class
+  - php.query.json
+  - php.query.decoding
+  - php.echo.json
+  - php.echo.roundtrip
+  - php.session.first-json
+  - php.session.second-json
+  - php.session.cookie-roundtrip
+  - php.upload.json
+  - php.upload.checksum
+  - php.error.json
+  - php.error.controlled
+  - php.missing.status
+  - php.concurrent.correct

@@ -87,7 +87,7 @@ Each application build workflow calls:
 - `.github/workflows/reusable-build-debian-image.yml`
 - `.github/workflows/reusable-aggregate-image-contract.yml`
 
-Pull-request and merge-queue callers grant only read access. Per-family release wrappers first run the same read-only build and test graph with image export enabled. A separate write-scoped publisher then verifies the same-run archive, pushes and signs architecture tags, and calls `.github/workflows/reusable-publish-image-manifest.yml`.
+Pull-request and merge-queue callers grant only read access. Per-family release wrappers first run the same read-only build and test graph with image export enabled. A separate write-scoped publisher verifies the same-run archive, pushes a run-scoped candidate, and reruns the functional contract from its immutable registry digest on the matching native runner. It then creates a signed candidate index, verifies native index selection and reruns the contract on every declared platform before moving stable tags.
 
 Functional evidence and release artifacts are scoped to one workflow attempt. Retry a failed image validation or release with **Re-run all jobs**; **Re-run failed jobs** intentionally fails closed rather than mixing artifacts from different attempts. See the [release permission boundary](docs/testing.md#release-permission-boundary).
 
@@ -102,7 +102,9 @@ The build workflow:
 7. Runs a process smoke test and a representative application contract.
 8. Generates an SBOM and scans with Trivy.
 9. For a trusted release only, exports the tested image and identity metadata as a one-day workflow artifact.
-10. In a separate release-only job, verifies the archive, pushes and signs architecture tags, and publishes and signs the final manifest.
+10. In a separate release-only job, verifies the archive and pushes and signs a run-scoped architecture candidate.
+11. Pulls that immutable candidate digest on its native platform and reruns the same application and lifecycle contract.
+12. Builds and signs a candidate multi-platform index, proves its selected member and contract on every native platform, and only then promotes the stable architecture and version-suite tags.
 
 ## Local Verification
 
@@ -134,7 +136,7 @@ tests/functional/run.sh \
   linux/amd64
 ```
 
-The image reference must exist in the local Docker image store. The test builds a small PHP application, places Nginx in front of PHP-FPM, verifies dynamic PHP modules, and checks the HTTP response. It writes a canonical `result.json` plus logs, identity proof, service state, and cleanup evidence. See [docs/testing.md](docs/testing.md) for every image contract and CI behavior.
+The image reference must exist in the local Docker image store. The test builds a small PHP application, places Nginx in front of PHP-FPM, verifies the exact declared extension inventory, and exercises autoloading, sessions, upload, error, and concurrent request paths. The host controller then sends `SIGTERM` to PID 1, requires a bounded clean exit, restarts the same container, and repeats the exact assertion set. It writes a canonical `result.json` plus assertion, lifecycle, identity, service-state, and cleanup evidence. See [docs/testing.md](docs/testing.md) for every image contract and CI behavior.
 
 Run Helm checks for one chart:
 

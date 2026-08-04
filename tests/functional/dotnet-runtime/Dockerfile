@@ -5,10 +5,14 @@ ARG DOTNET_SDK_IMAGE=scratch
 FROM --platform=$BUILDPLATFORM ${DOTNET_SDK_IMAGE} AS build
 ARG DOTNET_VERSION
 WORKDIR /src
-COPY RuntimeProbe.csproj Program.cs ./
-RUN dotnet publish RuntimeProbe.csproj \
+COPY NuGet.Config RuntimeProbe.csproj Program.cs appsettings.json ./
+RUN dotnet restore RuntimeProbe.csproj \
+      --configfile NuGet.Config \
+      -p:DhiTargetFramework=${DOTNET_VERSION} \
+    && dotnet publish RuntimeProbe.csproj \
       --configuration Release \
       --output /out \
+      --no-restore \
       --no-self-contained \
       -p:DhiTargetFramework=${DOTNET_VERSION}
 

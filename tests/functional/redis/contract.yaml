@@ -1,2 +1,22 @@
 schemaVersion: 1
 timeoutSeconds: 600
+assertionSuite: redis
+requiredAssertions:
+  - redis.ready
+  - redis.auth.required
+  - redis.auth.wrong-password
+  - redis.auth.valid
+  - redis.lifecycle.phase
+  - redis.persistence.marker
+  - redis.persistence.state
+  - redis.string.set
+  - redis.string.get
+  - redis.acl.key-prefix
+  - redis.ttl.expire-command
+  - redis.ttl.visible
+  - redis.ttl.expired
+  - redis.transaction.multi
+  - redis.transaction.exec
+  - redis.acl.forbidden-admin
+  - redis.concurrent.exact-counter
+  - redis.persistence.marker-written

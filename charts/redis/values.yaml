@@ -11,7 +11,7 @@ updateStrategy:
 
 image:
   registry: ghcr.io
-  repository: tpesla/redis
+  repository: peslaio/redis
   tag: 7.0-bookworm
   digest: ""
   pullPolicy: IfNotPresent

@@ -11,7 +11,16 @@ on:
       - .github/workflows/reusable-publish-tested-image.yml
       - tests/functional/releasectl.py
       - tests/functional/contractctl.rb
+      - tests/functional/fixturectl.py
+      - tests/functional/fixtures.lock.json
+      - tests/functional/lifecyclectl.py
       - tests/functional/scan_result.py
+      - tests/functional/result.py
+      - tests/functional/result.schema.json
+      - tests/functional/run.sh
+      - tests/functional/timeout.py
+      - tests/functional/harness/**
+      - tests/functional/node/**
       - .github/workflows/node-image.yml
       - .github/workflows/node-image-release.yml
       - images/node/**

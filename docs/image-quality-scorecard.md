@@ -6,9 +6,9 @@ This scorecard judges whether the images provide a production-relevant improveme
 
 ## Verdict
 
-**Portfolio score: 50/100 - candidate, not production-ready as a distribution.**
+**Portfolio score: 59/100 - candidate, not production-ready as a distribution.**
 
-Seven images are configured for runtime closure. Six published closure images are credible hardened-image candidates; PHP-FPM remains a candidate under repair until its new functional contract passes in CI. This cohort removes substantial runtime content, uses an exact non-root identity, rejects package drift, and has application-level tests. It can provide value in a controlled production pilot after the current commit builds successfully and consumers pin a digest, verify signatures, and provide secure configuration.
+All seven runtime-closure images are credible hardened-image candidates. For commit [`ea1d711`](https://github.com/peslaio/dhi/commit/ea1d7112b4cfc7dbced95bf6020ebb35a6a13e86), every configured release workflow completed successfully: 35 native build legs produced bound Trivy reports, exercised the declared application contracts, exported the tested images, and published signed architecture images; the resulting 20 version/suite manifests were also published and signed. The closure cohort removes substantial runtime content, uses an exact non-root identity, rejects package drift, and has application-level tests. It can provide value in a controlled production pilot when consumers pin a digest, verify signatures, and provide secure configuration.
 
 The full-rootfs images are not at the same maturity. Several offer fewer packages than their selected upstream image, but MariaDB, PostgreSQL, MongoDB, and RabbitMQ lack the mature initialization and lifecycle behavior of their official images. RabbitMQ and .NET currently have more package records than the selected upstream comparison. The portfolio therefore should not be advertised as a drop-in production replacement.
 
@@ -18,11 +18,11 @@ The full-rootfs images are not at the same maturity. Several offer fewer package
 | --- | ---: | ---: | --- |
 | Runtime minimization | 20 | 11 | Seven closure images have exact allowlists and very small root filesystems; nine families retain full minbase dependency trees. |
 | Least privilege and runtime hardening | 15 | 12 | Numeric non-root identity is checked; APT tools, setuid/setgid bits, and file capabilities are removed; closure images can remove shells. Full-rootfs images retain broader tooling and users can override OCI metadata. |
-| Functional correctness | 20 | 10 | Every family now has an application contract, but current native CI has not completed, PHP is known broken until rebuilt, RabbitMQ has no passing functional run, and service lifecycle coverage remains shallow. |
-| Supply chain and reproducibility | 20 | 7 | SBOM, Trivy, and keyless cosign exist. Inputs/actions are mutable, third-party key fingerprints are not checked, SBOMs are not OCI-attached, provenance is absent, and manifests consume mutable tags. |
-| Platform and release assurance | 15 | 7 | Native amd64/arm64 jobs, tested-image archive handoff, immutable architecture digest records, and signed manifests are designed. Most families have not yet been republished under `peslaio`, and final native-platform pull verification is still missing. |
+| Functional correctness | 20 | 14 | Every declared native leg passed its application contract at `ea1d711`, including the PHP FastCGI path and RabbitMQ queue roundtrip. Service lifecycle, persistence, authentication, TLS, upgrade, and failure coverage remain shallow. |
+| Supply chain and reproducibility | 20 | 9 | SBOM, keyless cosign, immutable-digest manifest sources, and bound fail-closed Trivy JSON coverage are proven. Inputs and action tags remain mutable, third-party key fingerprints are not checked, SBOMs and scan reports are not OCI-attached, and provenance is absent. |
+| Platform and release assurance | 15 | 10 | All 16 release workflows proved native builds, tested-image archive handoff, immutable architecture digest records, architecture signing, and signed manifests. Final native-platform pulls of the published registry objects are still missing. |
 | Maintenance and usability | 10 | 3 | Per-image workflows and package docs are clear. There is no lifecycle automation, rebuild SLA, compatibility policy, or support commitment; some defaults are EOL. |
-| **Total** | **100** | **50** | **Useful candidate architecture with material unresolved release and maintenance risk.** |
+| **Total** | **100** | **59** | **Useful candidate architecture with material unresolved supply-chain, lifecycle, and maintenance risk.** |
 
 A score of 80 is the minimum target for a production-supported image family. A score above 80 still requires a current successful release and a documented support policy.
 
@@ -33,11 +33,11 @@ Scores below measure repository maturity, not whether the application itself is 
 | Image | Score | Status | Main judgment |
 | --- | ---: | --- | --- |
 | `apache` | 68 | Candidate | Strong closure and static-app test; mutable inputs and aging release baseline limit assurance. |
-| `caddy` | 67 | Candidate | Three-package closure and real HTTP test; third-party key bootstrap and broad major tag remain risks. |
+| `caddy` | 67 | Candidate | Four-package closure and real HTTP test; third-party key bootstrap and broad major tag remain risks. |
 | `haproxy` | 68 | Candidate | Tight closure and backend proxy roundtrip; lifecycle/version automation is missing. |
-| `memcached` | 67 | Candidate | Five-package closure with protocol write/read; production network and resource policy remains consumer-owned. |
+| `memcached` | 67 | Candidate | Six-package closure with protocol write/read; production network and resource policy remains consumer-owned. |
 | `nginx` | 69 | Candidate | Tight closure and child-image HTTP contract; no immutable version/source policy. |
-| `php-fpm` | 61 | Repair pending CI | The new contract found missing dynamic modules in the published image. Closure paths and dependencies are fixed locally but require a green release. |
+| `php-fpm` | 66 | Candidate | Native Nginx-to-FastCGI contracts execute real PHP with required dynamic modules; lifecycle/version automation remains missing. |
 | `redis` | 61 | Restricted pilot | Tight closure and RESP write/read pass; default no-auth configuration is not a secure production default. |
 | `node` | 42 | Do not promote | Full rootfs and upstream Node.js 18 is EOL. A working HTTP fixture does not compensate for lifecycle risk. |
 | `python` | 53 | Experimental | Real app contract and fewer packages than upstream, but still full rootfs with no exact allowlist. |
@@ -45,7 +45,7 @@ Scores below measure repository maturity, not whether the application itself is 
 | `mariadb` | 43 | Do not replace upstream | SQL write/read works, but full rootfs and incomplete official-entrypoint-compatible initialization/lifecycle behavior dominate. |
 | `postgresql` | 46 | Do not replace upstream | Database write/read works, but trust/bootstrap behavior and lifecycle coverage are not a production replacement for upstream. |
 | `mongodb` | 40 | Do not promote | Functional CRUD baseline exists; auth, replica-set lifecycle, upgrade, and cross-platform release evidence are incomplete. |
-| `rabbitmq` | 34 | Do not promote | Full rootfs is larger by package count than upstream, version 3.10 is EOL, and native CI still must validate the new queue roundtrip. |
+| `rabbitmq` | 36 | Do not promote | Native queue declare/publish/consume passes, but the full rootfs is larger by package count than upstream, version 3.10 is EOL, and lifecycle/auth/TLS coverage is incomplete. |
 | `dotnet-runtime-8.0` | 45 | Time-limited experimental | App contract exists, but full rootfs exceeds Microsoft upstream and .NET 8 support ends 2026-11-10. |
 | `dotnet-runtime-9.0` | 41 | Do not start adoption | Full rootfs exceeds upstream and .NET 9 support ends 2026-11-10. |
 | `dotnet-runtime-10.0` | 52 | Experimental | Supported LTS and app contract are positives; footprint still exceeds Microsoft runtime and Debian packages are a different distribution model. |
@@ -59,13 +59,13 @@ The clearest gain is in the closure cohort. The current workflow closure sets, c
 
 | Image | DHI packages | Selected upstream packages | Reduction |
 | --- | ---: | ---: | ---: |
-| `apache` | 12 | 116 | 90% |
-| `caddy` | 3 | 32 | 91% |
-| `haproxy` | 18 | 92 | 80% |
-| `memcached` | 5 | 93 | 95% |
-| `nginx` | 8 | 142 | 94% |
-| `php-fpm` | 32 | 173 | 82% |
-| `redis` | 16 | 89 | 82% |
+| `apache` | 13 | 116 | 89% |
+| `caddy` | 4 | 32 | 88% |
+| `haproxy` | 19 | 92 | 79% |
+| `memcached` | 6 | 93 | 94% |
+| `nginx` | 9 | 142 | 94% |
+| `php-fpm` | 33 | 173 | 81% |
+| `redis` | 17 | 89 | 81% |
 
 These percentages show package-database reduction, not vulnerability reduction and not an exact count of exploitable paths. They are still meaningful because shells, package managers, and unrelated administration programs are absent from closure root filesystems and the main application behavior is exercised afterward.
 
@@ -79,7 +79,7 @@ For `node` and `python`, package counts are lower than upstream, but the full-ro
 - Setuid/setgid mode bits and Linux file capabilities are stripped and verified absent.
 - Functional contracts exercise HTTP, FastCGI, cache protocols, message queues, language applications, and database writes.
 - Native architecture runners remove QEMU behavior from release evidence.
-- Keyless signatures, SBOM generation, and vulnerability gates apply through a common workflow.
+- Keyless signatures, SBOM generation, retained bound vulnerability reports, and fail-closed vulnerability gates apply through a common workflow.
 
 ## Blocking Weaknesses
 
@@ -89,26 +89,28 @@ For `node` and `python`, package counts are lower than upstream, but the full-ro
 4. Database and messaging images do not match mature upstream initialization, credential, backup, restore, upgrade, and failure behavior.
 5. Some current defaults are EOL or near EOL. Node.js 18 ended upstream support on 2025-03-27; RabbitMQ 3.10 community support ended in 2022; .NET 8 and 9 end support on 2026-11-10.
 6. Debian 12 is now in LTS. Builds need `debian-security-support` coverage checks and a migration plan to Debian 13 instead of assuming uniform Bookworm security coverage.
-7. Current GHCR publication under `peslaio` is incomplete for the full-rootfs cohort until the new workflows finish successfully.
-8. Static gate behavior has no deliberate violation tests yet; the checks need fail-closed fixtures to prove that package, identity, shell, and privilege regressions are detected.
+7. There is no final native-platform pull and identity check that validates each published registry object independently of the uploaded build archive.
+8. Trivy coverage has deliberate false-green tests, but the rootfs package, identity, shell, and privilege gates still need a complete set of violation fixtures.
 
 ## Independent Review
 
-Kimi K3 was used through Moonshot AI's official API as an independent reviewer. It scored the pre-test baseline **38/100** and the post-change evidence **48/100**. The second review agreed that the Compose architecture is appropriate, but reduced credit because PHP and RabbitMQ do not yet have green native CI and because the static gates lack deliberate failure tests.
+Kimi K3 was used through Moonshot AI's official API as an independent reviewer. It scored the pre-test baseline **38/100** and the then-current post-change evidence **48/100**. At the time of that review, it agreed that the Compose architecture was appropriate but reduced credit because PHP and RabbitMQ did not yet have green native CI and because the static gates lacked deliberate failure tests.
 
-The maintained score is 50/100, within the normal uncertainty of the independent 48/100 review. The small difference reflects verified package reduction for Node/Python and architecture limitations in upstream package sources; it does not change the no-go decision for the full-rootfs cohort. Kimi's output is an independent opinion, not security certification.
+The later `ea1d711` release closed those specific PHP and RabbitMQ evidence gaps and proved bound, fail-closed Trivy coverage. The maintained score of 59/100 incorporates that later evidence; Kimi was not rerun, so its 48/100 remains a historical independent opinion rather than a current comparison or security certification. The no-go decision for the full-rootfs cohort is unchanged.
 
 ## Promotion Requirements
 
 Before calling any family production-supported:
 
-1. Complete a green native amd64/arm64 release for the exact commit.
+1. Complete a green release for every declared native platform for the exact commit.
 2. Pin release inputs and actions; verify every external signing key fingerprint.
 3. Attach SBOM and provenance to each immutable digest.
 4. Define rebuild cadence, vulnerability response SLA, supported versions, and EOL policy.
 5. Require digest-based consumer examples and signature identity verification.
 6. Add persistence, restart, authenticated/TLS, upgrade, and backup/restore tests where relevant.
 7. Demonstrate a material footprint or operational advantage over the selected upstream image.
+
+Release `ea1d711` satisfies requirement 1 for the current image changes. Every later promoted rebuild must satisfy it again.
 
 Until those conditions are met, use the terms `experimental`, `candidate`, or `restricted pilot`, not `production-ready DHI`.
 

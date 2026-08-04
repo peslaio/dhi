@@ -15,13 +15,13 @@ These images already have a small package database. Keep these package sets tigh
 
 | Image | Tag | Packages | Keep packages |
 | --- | --- | ---: | --- |
-| `apache` | `2.4-bookworm` | 12 | `apache2`, `apache2-bin`, `ca-certificates`, `libapr1`, `libaprutil1`, `libc6`, `libcrypt1`, `libexpat1`, `libpcre2-8-0`, `libssl3`, `libuuid1`, `media-types` |
-| `caddy` | `2-bookworm` | 3 | `ca-certificates`, `caddy`, `libc6` |
-| `haproxy` | `2.6-bookworm` | 18 | `ca-certificates`, `haproxy`, `libc6`, `libcap2`, `libcrypt1`, `libgcc-s1`, `libgcrypt20`, `libgpg-error0`, `liblua5.3-0`, `liblz4-1`, `liblzma5`, `libopentracing-c-wrapper0`, `libopentracing1`, `libpcre2-8-0`, `libssl3`, `libstdc++6`, `libsystemd0`, `libzstd1` |
-| `memcached` | `1.6-bookworm` | 5 | `libc6`, `libevent-2.1-7`, `libsasl2-2`, `libssl3`, `memcached` |
-| `nginx` | `1.22-bookworm` | 8 | `ca-certificates`, `libc6`, `libcrypt1`, `libpcre2-8-0`, `libssl3`, `nginx`, `nginx-common`, `zlib1g` |
-| `php-fpm` | `8.2-bookworm` | 32 | `ca-certificates`, `libacl1`, `libapparmor1`, `libargon2-1`, `libbsd0`, `libc6`, `libcap2`, `libedit2`, `libffi8`, `libgcc-s1`, `libgcrypt20`, `libgpg-error0`, `libicu72`, `liblz4-1`, `liblzma5`, `libmd0`, `libpcre2-8-0`, `libsodium23`, `libssl3`, `libstdc++6`, `libsystemd0`, `libtinfo6`, `libxml2`, `libzstd1`, `php-common`, `php8.2-cli`, `php8.2-common`, `php8.2-fpm`, `php8.2-opcache`, `php8.2-readline`, `tzdata`, `zlib1g` |
-| `redis` | `7.0-bookworm` | 16 | `libatomic1`, `libc6`, `libcap2`, `libgcc-s1`, `libgcrypt20`, `libgpg-error0`, `libjemalloc2`, `liblz4-1`, `liblzf1`, `liblzma5`, `libssl3`, `libstdc++6`, `libsystemd0`, `libzstd1`, `redis-server`, `redis-tools` |
+| `apache` | `2.4-bookworm` | 13 | `apache2`, `apache2-bin`, `base-files`, `ca-certificates`, `libapr1`, `libaprutil1`, `libc6`, `libcrypt1`, `libexpat1`, `libpcre2-8-0`, `libssl3`, `libuuid1`, `media-types` |
+| `caddy` | `2-bookworm` | 4 | `base-files`, `ca-certificates`, `caddy`, `libc6` |
+| `haproxy` | `2.6-bookworm` | 19 | `base-files`, `ca-certificates`, `haproxy`, `libc6`, `libcap2`, `libcrypt1`, `libgcc-s1`, `libgcrypt20`, `libgpg-error0`, `liblua5.3-0`, `liblz4-1`, `liblzma5`, `libopentracing-c-wrapper0`, `libopentracing1`, `libpcre2-8-0`, `libssl3`, `libstdc++6`, `libsystemd0`, `libzstd1` |
+| `memcached` | `1.6-bookworm` | 6 | `base-files`, `libc6`, `libevent-2.1-7`, `libsasl2-2`, `libssl3`, `memcached` |
+| `nginx` | `1.22-bookworm` | 9 | `base-files`, `ca-certificates`, `libc6`, `libcrypt1`, `libpcre2-8-0`, `libssl3`, `nginx`, `nginx-common`, `zlib1g` |
+| `php-fpm` | `8.2-bookworm` | 33 | `base-files`, `ca-certificates`, `libacl1`, `libapparmor1`, `libargon2-1`, `libbsd0`, `libc6`, `libcap2`, `libedit2`, `libffi8`, `libgcc-s1`, `libgcrypt20`, `libgpg-error0`, `libicu72`, `liblz4-1`, `liblzma5`, `libmd0`, `libpcre2-8-0`, `libsodium23`, `libssl3`, `libstdc++6`, `libsystemd0`, `libtinfo6`, `libxml2`, `libzstd1`, `php-common`, `php8.2-cli`, `php8.2-common`, `php8.2-fpm`, `php8.2-opcache`, `php8.2-readline`, `tzdata`, `zlib1g` |
+| `redis` | `7.0-bookworm` | 17 | `base-files`, `libatomic1`, `libc6`, `libcap2`, `libgcc-s1`, `libgcrypt20`, `libgpg-error0`, `libjemalloc2`, `liblz4-1`, `liblzf1`, `liblzma5`, `libssl3`, `libstdc++6`, `libsystemd0`, `libzstd1`, `redis-server`, `redis-tools` |
 
 ## Full-Rootfs Images
 

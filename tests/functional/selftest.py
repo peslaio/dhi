@@ -15,6 +15,7 @@ from unittest import mock
 import fixturectl
 import releasectl
 import result as contract_result
+import scan_result
 
 
 IMAGE_ID = "sha256:" + ("a" * 64)
@@ -95,6 +96,30 @@ def passing_result():
         "evidence": dict(contract_result.EVIDENCE_PATHS),
         "secondaryFailures": [],
         "warnings": [],
+    }
+
+
+def passing_scan_report():
+    return {
+        "SchemaVersion": 2,
+        "ArtifactName": "local/redis:test",
+        "ArtifactType": "container_image",
+        "Metadata": {
+            "OS": {"Family": "debian", "Name": "12.11"},
+            "ImageID": IMAGE_ID,
+        },
+        "Results": [
+            {
+                "Target": "local/redis:test (debian 12.11)",
+                "Class": "os-pkgs",
+                "Type": "debian",
+                "Packages": [
+                    {"Name": "base-files", "Version": "12.4+deb12u11"},
+                    {"Name": "redis-server", "Version": "5:7.0.15-1"},
+                ],
+                "Vulnerabilities": None,
+            }
+        ],
     }
 
 
@@ -337,6 +362,100 @@ class ResultContractTests(unittest.TestCase):
         self.assertEqual(emitted["outcome"]["exitCode"], 15)
         self.assertTrue(emitted["secondaryFailures"])
         contract_result.validate_result(emitted, self.root)
+
+
+class ScanResultTests(unittest.TestCase):
+    def test_os_package_scan_evidence_is_accepted(self):
+        summary = scan_result.validate_report(
+            passing_scan_report(),
+            "debian",
+            "local/redis:test",
+            IMAGE_ID,
+            {"base-files", "redis-server"},
+        )
+        self.assertEqual(summary["status"], "pass")
+        self.assertEqual(summary["trivySchemaVersion"], 2)
+        self.assertEqual(summary["osFamily"], "debian")
+        self.assertEqual(summary["packageCount"], 2)
+
+    def test_false_green_scan_reports_are_rejected(self):
+        mutations = {
+            "old schema": lambda value: value.__setitem__("SchemaVersion", 1),
+            "future schema": lambda value: value.__setitem__("SchemaVersion", 3),
+            "missing OS metadata": lambda value: value["Metadata"].pop("OS"),
+            "unsupported OS": lambda value: value["Metadata"]["OS"].__setitem__(
+                "Family", "none"
+            ),
+            "empty OS version": lambda value: value["Metadata"]["OS"].__setitem__(
+                "Name", ""
+            ),
+            "no OS result": lambda value: value.__setitem__("Results", []),
+            "no packages": lambda value: value["Results"][0].__setitem__(
+                "Packages", []
+            ),
+            "wrong artifact": lambda value: value.__setitem__(
+                "ArtifactName", "local/other:test"
+            ),
+            "wrong image ID": lambda value: value["Metadata"].__setitem__(
+                "ImageID", "sha256:" + ("b" * 64)
+            ),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                value = copy.deepcopy(passing_scan_report())
+                mutate(value)
+                with self.assertRaises(scan_result.ScanResultError):
+                    scan_result.validate_report(
+                        value,
+                        "debian",
+                        "local/redis:test",
+                        IMAGE_ID,
+                    )
+
+    def test_runtime_package_inventory_must_match(self):
+        with self.assertRaisesRegex(
+            scan_result.ScanResultError,
+            "missing=redis-tools.*unexpected=redis-server",
+        ):
+            scan_result.validate_report(
+                passing_scan_report(),
+                "debian",
+                "local/redis:test",
+                IMAGE_ID,
+                {"base-files", "redis-tools"},
+            )
+
+    def test_scan_result_cli_rejects_missing_or_malformed_reports(self):
+        root = pathlib.Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = pathlib.Path(directory)
+            malformed = temporary / "malformed.json"
+            malformed.write_text("{", encoding="utf-8")
+            reports = (temporary / "missing.json", malformed)
+            for report in reports:
+                with self.subTest(report=report.name):
+                    completed = subprocess.run(
+                        [
+                            "python3",
+                            "tests/functional/scan_result.py",
+                            "--report",
+                            str(report),
+                            "--expected-family",
+                            "debian",
+                            "--expected-artifact-name",
+                            "local/redis:test",
+                            "--expected-image-id",
+                            IMAGE_ID,
+                        ],
+                        cwd=root,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        timeout=30,
+                        check=False,
+                    )
+                    self.assertEqual(completed.returncode, 1)
+                    self.assertIn("scan_result:", completed.stderr)
 
 
 class FixtureLockTests(unittest.TestCase):
@@ -656,6 +775,85 @@ class WorkflowPolicyTests(unittest.TestCase):
             "smoke_command: /usr/sbin/rabbitmq-diagnostics -q ping --timeout 5",
             rabbitmq_workflow,
         )
+
+    def test_vulnerability_scans_are_coverage_gated(self):
+        root = pathlib.Path(__file__).resolve().parents[2]
+        workflow_dir = root / ".github" / "workflows"
+        build_workflow = (
+            workflow_dir / "reusable-build-debian-image.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("/etc/debian_version", build_workflow)
+        self.assertIn("/etc/os-release", build_workflow)
+        self.assertIn(
+            "Runtime closure is missing a readable Debian OS identity",
+            build_workflow,
+        )
+        self.assertIn("Runtime closure package database is empty", build_workflow)
+        self.assertIn("format: json", build_workflow)
+        self.assertIn("output: artifacts/security/trivy-report.json", build_workflow)
+        self.assertIn("list-all-pkgs: true", build_workflow)
+        self.assertIn("tests/functional/scan_result.py", build_workflow)
+
+        scan_step = build_workflow.split(
+            "\n      - name: Scan image\n", 1
+        )[1].split("\n      - name: Validate vulnerability scan coverage\n", 1)[0]
+        coverage_step = build_workflow.split(
+            "\n      - name: Validate vulnerability scan coverage\n", 1
+        )[1].split("\n      - name: Upload vulnerability scan evidence\n", 1)[0]
+        upload_step = build_workflow.split(
+            "\n      - name: Upload vulnerability scan evidence\n", 1
+        )[1].split("\n      - name: Enforce vulnerability scan\n", 1)[0]
+        enforcement_step = build_workflow.split(
+            "\n      - name: Enforce vulnerability scan\n", 1
+        )[1].split("\n      - name: Export fully tested image for release\n", 1)[0]
+        export_step = build_workflow.split(
+            "\n      - name: Export fully tested image for release\n", 1
+        )[1].split("\n      - name:", 1)[0]
+
+        self.assertIn("id: vulnerability-scan", scan_step)
+        self.assertIn("if: inputs.scan", scan_step)
+        self.assertIn("continue-on-error: true", scan_step)
+        self.assertIn("id: vulnerability-coverage", coverage_step)
+        self.assertIn("if: ${{ always() && inputs.scan }}", coverage_step)
+        self.assertIn("continue-on-error: true", coverage_step)
+        self.assertIn('--expected-artifact-name "$PRIMARY_TAG"', coverage_step)
+        self.assertIn('--expected-image-id "$TESTED_IMAGE_ID"', coverage_step)
+        self.assertIn("if: ${{ always() && inputs.scan }}", upload_step)
+        self.assertIn("if-no-files-found: error", upload_step)
+        self.assertIn("if: ${{ always() && inputs.scan }}", enforcement_step)
+        self.assertIn(
+            "steps.vulnerability-scan.outcome", enforcement_step
+        )
+        self.assertIn(
+            "steps.vulnerability-coverage.outcome", enforcement_step
+        )
+        self.assertIn(
+            "Vulnerability scan coverage outcome: $COVERAGE_OUTCOME",
+            enforcement_step,
+        )
+        self.assertIn("if: inputs.export_image", export_step)
+        self.assertNotIn("always()", export_step)
+        self.assertNotIn("continue-on-error", export_step)
+
+        closure_workflows = {
+            "apache-image.yml",
+            "caddy-image.yml",
+            "haproxy-image.yml",
+            "memcached-image.yml",
+            "nginx-image.yml",
+            "php-fpm-image.yml",
+            "redis-image.yml",
+        }
+        for workflow_name in closure_workflows:
+            with self.subTest(workflow=workflow_name):
+                workflow = (workflow_dir / workflow_name).read_text(encoding="utf-8")
+                allowed_packages = next(
+                    line.partition(":")[2].strip().split(",")
+                    for line in workflow.splitlines()
+                    if line.strip().startswith("allowed_packages:")
+                )
+                self.assertIn("base-files", allowed_packages)
 
     def test_closure_allowlists_match_package_inventory(self):
         root = pathlib.Path(__file__).resolve().parents[2]

@@ -39,7 +39,7 @@ family workflow -> reusable-build-debian-image.yml (read-only)
         +-- static image contract
         +-- process smoke test
         +-- Docker Compose application contract
-        +-- SPDX SBOM + Trivy gate
+        +-- SPDX SBOM + bound Trivy JSON coverage gate
         +-- release-only Docker archive + bound metadata artifact
         |
         v
@@ -69,9 +69,9 @@ Test fixture base images are recorded by tag and multi-platform digest in `tests
 
 Used by `apache`, `caddy`, `haproxy`, `memcached`, `nginx`, `php-fpm`, and `redis`.
 
-The builder copies declared application files, expands declared glob patterns, walks ELF dependencies with `ldd`, and records an exact package allowlist. It then removes shell and package-manager executables when requested. An unmatched required file pattern now fails the build.
+The builder copies declared application files, expands declared glob patterns, walks ELF dependencies with `ldd`, and records an exact package allowlist. It retains the Debian OS identity and its `base-files` package record so vulnerability scanners can interpret the filtered dpkg database. It then removes shell and package-manager executables when requested. An unmatched required file pattern or missing OS/package identity fails the build.
 
-This is the strongest profile in the repository because it materially reduces runtime contents. Package counts in the last published amd64 snapshot range from 2 to 16, compared with 32 to 173 records in the selected upstream images. Package count is only a proxy; functional coverage and reachable binaries matter more than the number alone.
+This is the strongest profile in the repository because it materially reduces runtime contents. Declared package counts range from 4 to 33, compared with 32 to 173 records in the selected upstream images. Package count is only a proxy; functional coverage and reachable binaries matter more than the number alone.
 
 ### Full rootfs
 
@@ -88,10 +88,10 @@ This profile is a hardened Debian image construction method, not a distroless-eq
 3. `mmdebstrap` verifies Debian repository metadata with the Debian archive keyring and installs the requested packages.
 4. The builder creates either a closure rootfs or a cleaned full rootfs and writes a single runtime identity to `/etc/passwd`.
 5. The image is built from `scratch` with exact `USER uid:gid` metadata.
-6. Static checks reject UID 0, identity mismatch, forbidden package records, unexpected allowlist changes, APT executables, setuid/setgid files, file capabilities, and common shell executables when shell removal is enabled.
+6. Static checks reject UID 0, identity mismatch, missing Debian OS/package identity, forbidden package records, unexpected allowlist changes, APT executables, setuid/setgid files, file capabilities, and common shell executables when shell removal is enabled.
 7. A smoke test validates process startup, command output, TCP, or HTTP behavior.
 8. A Compose application contract builds or configures a representative consumer and exercises an application-level operation. The common runner proves the local source-image identity, applies a wall-clock deadline, captures evidence before teardown, and emits a canonical result.
-9. Syft emits an SPDX JSON SBOM and Trivy gates fixable HIGH and CRITICAL package vulnerabilities.
+9. Syft emits an SPDX JSON SBOM. Trivy emits a full JSON package report and gates fixable HIGH and CRITICAL vulnerabilities. A separate validator binds that report to the tested image tag and image ID, requires Debian OS metadata and a non-empty `os-pkgs` result, and requires runtime-closure packages to equal the declared allowlist. Scan failure, missing evidence, or missing coverage blocks export.
 10. A release build saves the tested architecture image as a short-lived same-run artifact. Metadata binds the archive digest and size to the repository, commit, run attempt, image ID, version, suite, and platform.
 11. A separate write-scoped publisher verifies and loads that archive, pushes and signs the architecture digest, and then assembles and signs the multi-architecture manifest. Pull-request and merge-queue graphs never receive package or OIDC write capability.
 
@@ -125,7 +125,7 @@ Non-root metadata does not prevent a Kubernetes workload from overriding the use
 - Exact package allowlists make dependency drift visible for closure images.
 - Every image family has an application-level contract, including data write/read operations for stateful services.
 - Native amd64 and arm64 runners test the platform that will be published.
-- SBOM generation, vulnerability gating, and keyless signing are part of the common workflow.
+- SBOM generation, fail-closed vulnerability coverage, retained scan evidence, and keyless signing are part of the common workflow.
 - Read-only validation is structurally separate from registry login, push, and OIDC signing; release publication consumes the exact image archive that passed the gates.
 - Separate image workflows provide clear ownership and failure isolation while retaining a common implementation.
 
@@ -139,9 +139,9 @@ Third-party APT keys are downloaded during the build without a declared fingerpr
 
 ### Artifact evidence is incomplete
 
-The SPDX SBOM is uploaded as a workflow artifact but is not attached to the OCI digest. There is no SLSA provenance or in-toto build attestation. Consumers therefore cannot retrieve all evidence from the image reference alone.
+The SPDX SBOM and bound Trivy JSON report are uploaded as workflow artifacts but are not attached to the OCI digest. There is no SLSA provenance or in-toto build attestation. Consumers therefore cannot retrieve all evidence from the image reference alone.
 
-Trivy scans OS packages for HIGH and CRITICAL vulnerabilities and ignores unfixed findings. It does not currently gate secrets, configuration findings, licenses, or a policy-defined age for ignored vulnerabilities.
+Trivy coverage is validated for Debian OS packages before export, gates HIGH and CRITICAL vulnerabilities, and ignores unfixed findings. It does not currently gate secrets, configuration findings, licenses, or a policy-defined age for ignored vulnerabilities.
 
 ### Version lifecycle is weak
 
@@ -161,7 +161,7 @@ Version, suite, architecture, and contract timeout now have validated authoritie
 
 ### Some gates still lack deliberate failure tests
 
-The contract control plane has daemon-free negative tests for malformed results, failed test exits, OOM termination, identity mismatch, evidence aliasing, and missing evidence. The rootfs package, user, shell, and privilege gates do not yet inject every known violation and prove each check fails closed. The PHP incident shows why positive startup checks are insufficient: the old image passed CI while required runtime files were absent.
+The contract control plane has daemon-free negative tests for malformed results, failed test exits, OOM termination, identity mismatch, evidence aliasing, missing evidence, and Trivy reports that omit OS or package coverage. The rootfs package, user, shell, and privilege gates do not yet inject every known violation and prove each check fails closed. The PHP incident shows why positive startup checks are insufficient: the old image passed CI while required runtime files were absent.
 
 ## Target Common Pattern
 

@@ -42,7 +42,7 @@ jobs:
       runtime_closure: true
       runtime_closure_binaries: /usr/bin/memcached
       forbidden_packages: apt,libapt-pkg6.0,debian-archive-keyring,gpgv,bash,dash,dpkg
-      allowed_packages: libc6,libevent-2.1-7,libsasl2-2,libssl3,memcached
+      allowed_packages: base-files,libc6,libevent-2.1-7,libsasl2-2,libssl3,memcached
       entrypoint: '["/usr/bin/memcached"]'
       cmd: '["-m","64","-p","11211","-l","0.0.0.0","-U","0"]'
       workdir: /data

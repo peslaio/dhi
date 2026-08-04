@@ -11,6 +11,7 @@ on:
       - .github/workflows/reusable-publish-tested-image.yml
       - tests/functional/releasectl.py
       - tests/functional/contractctl.rb
+      - tests/functional/scan_result.py
       - .github/workflows/mariadb-image.yml
       - .github/workflows/mariadb-image-release.yml
       - images/mariadb/**

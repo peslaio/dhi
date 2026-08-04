@@ -47,7 +47,7 @@ jobs:
         /usr/lib/*/ossl-modules
         /var/www/html
       forbidden_packages: apt,libapt-pkg6.0,debian-archive-keyring,gpgv,iproute2,libbpf1,libelf1,libmnl0,libxtables12,libcap2-bin,usrmerge,perl,perl-modules-5.36,libperl5.36,libfile-find-rule-perl,libnumber-compare-perl,libtext-glob-perl,libgdbm6,libgdbm-compat4,bash,dash,dpkg
-      allowed_packages: ca-certificates,libc6,libcrypt1,libpcre2-8-0,libssl3,nginx,nginx-common,zlib1g
+      allowed_packages: base-files,ca-certificates,libc6,libcrypt1,libpcre2-8-0,libssl3,nginx,nginx-common,zlib1g
       config_path: images/nginx/nginx.conf
       entrypoint: '["/usr/sbin/nginx"]'
       cmd: '["-g","daemon off;","-c","/etc/nginx/nginx.conf"]'

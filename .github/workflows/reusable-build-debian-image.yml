@@ -553,9 +553,11 @@ jobs:
             )
 
             for common_path in \
+              /etc/debian_version \
               /etc/passwd \
               /etc/group \
               /etc/nsswitch.conf \
+              /etc/os-release \
               /etc/protocols \
               /etc/services; do
               copy_runtime_path "$common_path"
@@ -606,6 +608,16 @@ jobs:
               }
             ' "$rootfs/var/lib/dpkg/status" | sudo tee "$runtime_rootfs/var/lib/dpkg/status" >/dev/null
             sudo touch "$runtime_rootfs/var/lib/dpkg/available"
+
+            if [ ! -r "$runtime_rootfs/etc/os-release" ] \
+              || ! grep -Eq '^ID=(debian|"debian")$' "$runtime_rootfs/etc/os-release"; then
+              echo "Runtime closure is missing a readable Debian OS identity." >&2
+              exit 1
+            fi
+            if [ ! -s "$runtime_rootfs/var/lib/dpkg/status" ]; then
+              echo "Runtime closure package database is empty." >&2
+              exit 1
+            fi
 
             echo "Runtime closure package count: $(wc -l < "$runtime_packages.sorted")"
             final_rootfs="$runtime_rootfs"
@@ -1105,18 +1117,69 @@ jobs:
           output-file: sbom-${{ inputs.image_name }}-${{ inputs.image_version }}-${{ inputs.debian_suite }}-${{ inputs.debian_arch }}.spdx.json
           artifact-name: sbom-${{ inputs.image_name }}-${{ inputs.image_version }}-${{ inputs.debian_suite }}-${{ inputs.debian_arch }}-attempt-${{ github.run_attempt }}
 
-      - name: Scan image
+      - name: Prepare vulnerability scan evidence
         if: inputs.scan
+        run: mkdir -p artifacts/security
+
+      - name: Scan image
+        id: vulnerability-scan
+        if: inputs.scan
+        continue-on-error: true
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ steps.meta.outputs.primary_tag }}
-          format: table
+          format: json
+          output: artifacts/security/trivy-report.json
+          list-all-pkgs: true
           scanners: vuln
           exit-code: ${{ inputs.fail_on_vulnerabilities && '1' || '0' }}
           ignore-unfixed: true
           trivyignores: ${{ inputs.trivyignores }}
           vuln-type: os,library
           severity: HIGH,CRITICAL
+
+      - name: Validate vulnerability scan coverage
+        id: vulnerability-coverage
+        if: ${{ always() && inputs.scan }}
+        continue-on-error: true
+        env:
+          ALLOWED_PACKAGES: ${{ inputs.allowed_packages }}
+          PRIMARY_TAG: ${{ steps.meta.outputs.primary_tag }}
+          TESTED_IMAGE_ID: ${{ steps.tested-image.outputs.image_id }}
+        run: |
+          set -euo pipefail
+          python3 tests/functional/scan_result.py \
+            --report artifacts/security/trivy-report.json \
+            --expected-family debian \
+            --expected-artifact-name "$PRIMARY_TAG" \
+            --expected-image-id "$TESTED_IMAGE_ID" \
+            --expected-packages "$ALLOWED_PACKAGES"
+
+      - name: Upload vulnerability scan evidence
+        if: ${{ always() && inputs.scan }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: trivy-${{ inputs.image_name }}-${{ inputs.image_version }}-${{ inputs.debian_suite }}-${{ inputs.debian_arch }}-attempt-${{ github.run_attempt }}
+          path: artifacts/security/trivy-report.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
+
+      - name: Enforce vulnerability scan
+        if: ${{ always() && inputs.scan }}
+        env:
+          SCAN_OUTCOME: ${{ steps.vulnerability-scan.outcome }}
+          COVERAGE_OUTCOME: ${{ steps.vulnerability-coverage.outcome }}
+        run: |
+          set -euo pipefail
+          if [ "$SCAN_OUTCOME" != "success" ]; then
+            echo "Vulnerability scan outcome: $SCAN_OUTCOME" >&2
+            exit 1
+          fi
+          if [ "$COVERAGE_OUTCOME" != "success" ]; then
+            echo "Vulnerability scan coverage outcome: $COVERAGE_OUTCOME" >&2
+            exit 1
+          fi
 
       - name: Export fully tested image for release
         if: inputs.export_image

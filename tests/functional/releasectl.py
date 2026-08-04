@@ -21,6 +21,7 @@ COMMON_RELEASE_PATHS = {
     ".github/workflows/reusable-publish-tested-image.yml",
     "tests/functional/contractctl.rb",
     "tests/functional/releasectl.py",
+    "tests/functional/scan_result.py",
 }
 
 

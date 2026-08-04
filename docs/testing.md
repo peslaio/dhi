@@ -13,6 +13,7 @@ The repository currently declares 20 image specifications, 16 functional suites,
 - `tests/functional/<family>/compose.yaml` is the executable application topology.
 - `tests/functional/fixtures.lock.json` pins external fixture images by multi-platform digest.
 - `tests/functional/result.schema.json` defines the portable envelope and pass/fail conditionals. The authoritative `result.py` validator additionally cross-binds Docker, Compose, identity, fixture-lock, and cleanup evidence that JSON Schema cannot compare across files.
+- `tests/functional/scan_result.py` validates that Trivy scanned the exact tested image as Debian, produced a non-empty OS-package inventory, and, for a runtime closure, found exactly the declared package allowlist.
 
 `contractctl.rb` joins these sources, rejects missing or orphaned suites, validates Compose policy, and emits build and manifest matrices at workflow runtime. Generated matrices are not committed.
 
@@ -23,7 +24,7 @@ ruby tests/functional/contractctl.rb validate
 python3 tests/functional/selftest.py
 ```
 
-The first command renders every Compose contract and therefore requires Docker Compose v2, but it does not require a running Docker daemon. The self-test deliberately submits fabricated green results and verifies that they are rejected.
+The first command renders every Compose contract and therefore requires Docker Compose v2, but it does not require a running Docker daemon. The self-test deliberately submits fabricated green application results and false-green vulnerability reports and verifies that they are rejected.
 
 Fixture references can be checked statically or against their registries:
 
@@ -38,13 +39,13 @@ The online check confirms that each pinned index still exposes every declared fi
 
 | Layer | Gate | Purpose |
 | --- | --- | --- |
-| L0 | Rootfs and image assertions | Validate package policy, numeric user identity, forbidden tools, required files, privilege bits, capabilities, and shell removal. |
+| L0 | Rootfs and image assertions | Validate package policy, Debian OS identity, numeric user identity, forbidden tools, required files, privilege bits, capabilities, and shell removal. |
 | L1 | Process smoke | Validate startup, config parsing, port readiness, or a direct command. |
 | L2 | Compose application contract | Build or configure a representative consumer and verify useful protocol behavior. |
 | L3 | Published artifact | Verify digest signature, SBOM/provenance attachment, manifest platforms, and registry pull. Some controls remain planned. |
 | L4 | Kubernetes lifecycle | Validate charts, persistence, restart, upgrade, failover, backup, and policy. Planned separately. |
 
-L0 through L2 run against the local image before an architecture artifact is pushed.
+L0 through L2 run against the local image before an architecture artifact is pushed. The same local image then receives an SPDX SBOM and a Trivy JSON scan. The scan is not accepted merely because Trivy exits zero: a separate coverage gate binds the report to the tested image ID and requires Debian OS metadata plus a non-empty package inventory. Runtime closures must match their exact allowlist. The JSON report is retained as workflow evidence.
 
 ## Functional Contract Matrix
 
@@ -147,7 +148,7 @@ Impact selection is fail-closed:
 - documentation-only changes select no image legs but still run preflight and the stable gate;
 - scheduled and merge-queue runs select all declared legs.
 
-Each selected build leg runs on its native GitHub runner (`ubuntu-24.04` for amd64 and `ubuntu-24.04-arm` for arm64), uploads a uniquely named evidence artifact even when the contract fails, and then enforces the runner outcome. Family and central aggregators require the exact expected `(family, version, platform)` result set. Missing, duplicate, unexpected, malformed, or non-passing results fail the gate.
+Each selected build leg runs on its native GitHub runner (`ubuntu-24.04` for amd64 and `ubuntu-24.04-arm` for arm64), uploads uniquely named functional and vulnerability evidence, and then enforces both outcomes. Family and central aggregators require the exact expected `(family, version, platform)` functional result set. Missing, duplicate, unexpected, malformed, or non-passing results fail the gate.
 
 Direct per-image push and manual release wrappers remain available. Their path filters intentionally cover production build inputs, while functional-test-only pull-request coverage is owned by the central unfiltered workflow. Manual publication is accepted only when the selected ref is `main`.
 
@@ -157,7 +158,7 @@ The central workflow and all family build workflows are read-only. They set `exp
 
 A trusted main-branch release has two phases:
 
-1. `release_build` calls the same read-only family workflow with `export_image: true`. Only after static checks, smoke, the functional contract, SBOM generation, and the Trivy gate succeed does the builder save the architecture-tagged image as a run-scoped artifact.
+1. `release_build` calls the same read-only family workflow with `export_image: true`. Only after static checks, smoke, the functional contract, SBOM generation, Trivy policy, and independent Trivy coverage validation succeed does the builder save the architecture-tagged image as a run-scoped artifact.
 2. `release_publish` receives `packages: write` and `id-token: write`, downloads only the named artifact from the current workflow run, verifies its repository, commit SHA, run ID, run attempt, version, platform, local image ID, byte size, and SHA-256 digest, and then pushes and signs it. Each publisher records its immutable registry digest; manifest publication validates the complete expected record set and composes only from `image@sha256:…` references after every expected architecture succeeds.
 
 The release wrapper serializes runs per family and ref without cancelling an active publisher. This prevents two main-branch runs from concurrently overwriting the same architecture tags. Architecture and manifest publishers also require their commit to remain an ancestor of current `main` and compare intervening paths immediately before writing. A newer documentation-only or unrelated-family commit is allowed; a force-pushed lineage or a newer change to the same family or a shared release input fails closed. Self-tests require this path classifier to equal every wrapper's push trigger paths. The accepted design is recorded in [ADR 0002](adr/0002-tested-image-publication-boundary.md).
@@ -178,4 +179,4 @@ The current contracts establish baseline runtime compatibility. Production promo
 6. Test supported-version upgrades with retained data.
 7. Test authenticated and TLS-enabled service configuration.
 8. Test Helm charts in kind, including readiness, disruption, NetworkPolicy, and failover.
-9. Add deliberate rootfs workflow-policy violations that prove every L0 gate fails closed.
+9. Add deliberate rootfs workflow-policy violations beyond the covered Trivy no-OS/no-package cases to prove every L0 gate fails closed.

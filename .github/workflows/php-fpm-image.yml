@@ -52,7 +52,7 @@ jobs:
         /usr/share/php/8.2/fpm
         /usr/share/zoneinfo
       forbidden_packages: apt,libapt-pkg6.0,debian-archive-keyring,gpgv,bash,dash,dpkg
-      allowed_packages: ca-certificates,libacl1,libapparmor1,libargon2-1,libbsd0,libc6,libcap2,libedit2,libffi8,libgcc-s1,libgcrypt20,libgpg-error0,libicu72,liblz4-1,liblzma5,libmd0,libpcre2-8-0,libsodium23,libssl3,libstdc++6,libsystemd0,libtinfo6,libxml2,libzstd1,php-common,php8.2-cli,php8.2-common,php8.2-fpm,php8.2-opcache,php8.2-readline,tzdata,zlib1g
+      allowed_packages: base-files,ca-certificates,libacl1,libapparmor1,libargon2-1,libbsd0,libc6,libcap2,libedit2,libffi8,libgcc-s1,libgcrypt20,libgpg-error0,libicu72,liblz4-1,liblzma5,libmd0,libpcre2-8-0,libsodium23,libssl3,libstdc++6,libsystemd0,libtinfo6,libxml2,libzstd1,php-common,php8.2-cli,php8.2-common,php8.2-fpm,php8.2-opcache,php8.2-readline,tzdata,zlib1g
       config_path: images/php-fpm/php-fpm.conf
       entrypoint: '["/usr/sbin/php-fpm8.2"]'
       cmd: '["-F","-O","-y","/etc/php-fpm/php-fpm.conf"]'

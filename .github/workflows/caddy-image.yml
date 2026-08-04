@@ -48,7 +48,7 @@ jobs:
         /etc/caddy
         /etc/ssl/certs
       forbidden_packages: apt,libapt-pkg6.0,debian-archive-keyring,gpgv,bash,dash,dpkg
-      allowed_packages: ca-certificates,caddy,libc6
+      allowed_packages: base-files,ca-certificates,caddy,libc6
       config_path: images/caddy/Caddyfile
       entrypoint: '["/usr/bin/caddy"]'
       cmd: '["run","--config","/etc/caddy/caddy.conf","--adapter","caddyfile"]'

@@ -1,6 +1,6 @@
 # DHI Image Quality Scorecard
 
-Assessment date: 2026-07-31.
+Assessment date: 2026-08-04.
 
 This scorecard judges whether the images provide a production-relevant improvement over regular upstream Docker Hub images. It does not compare them with Docker's paid Hardened Images service, and it does not treat a low vulnerability count as sufficient evidence of hardening.
 
@@ -35,7 +35,7 @@ Scores below measure repository maturity, not whether the application itself is 
 | `apache` | 68 | Candidate | Strong closure and static-app test; mutable inputs and aging release baseline limit assurance. |
 | `caddy` | 67 | Candidate | Three-package closure and real HTTP test; third-party key bootstrap and broad major tag remain risks. |
 | `haproxy` | 68 | Candidate | Tight closure and backend proxy roundtrip; lifecycle/version automation is missing. |
-| `memcached` | 67 | Candidate | Two-package closure with protocol write/read; production network and resource policy remains consumer-owned. |
+| `memcached` | 67 | Candidate | Five-package closure with protocol write/read; production network and resource policy remains consumer-owned. |
 | `nginx` | 69 | Candidate | Tight closure and child-image HTTP contract; no immutable version/source policy. |
 | `php-fpm` | 61 | Repair pending CI | The new contract found missing dynamic modules in the published image. Closure paths and dependencies are fixed locally but require a green release. |
 | `redis` | 61 | Restricted pilot | Tight closure and RESP write/read pass; default no-auth configuration is not a secure production default. |
@@ -55,17 +55,17 @@ Scores below measure repository maturity, not whether the application itself is 
 
 ## Measurable Gains Over Regular Images
 
-The clearest gain is in the closure cohort. The last amd64 package snapshot records:
+The clearest gain is in the closure cohort. The current workflow closure sets, compared with the last upstream amd64 package snapshot, record:
 
 | Image | DHI packages | Selected upstream packages | Reduction |
 | --- | ---: | ---: | ---: |
-| `apache` | 8 | 116 | 93% |
+| `apache` | 12 | 116 | 90% |
 | `caddy` | 3 | 32 | 91% |
-| `haproxy` | 9 | 92 | 90% |
-| `memcached` | 2 | 93 | 98% |
-| `nginx` | 7 | 142 | 95% |
-| `php-fpm` | 18 expected after repair | 173 | 90% |
-| `redis` | 7 | 89 | 92% |
+| `haproxy` | 18 | 92 | 80% |
+| `memcached` | 5 | 93 | 95% |
+| `nginx` | 8 | 142 | 94% |
+| `php-fpm` | 32 | 173 | 82% |
+| `redis` | 16 | 89 | 82% |
 
 These percentages show package-database reduction, not vulnerability reduction and not an exact count of exploitable paths. They are still meaningful because shells, package managers, and unrelated administration programs are absent from closure root filesystems and the main application behavior is exercised afterward.
 

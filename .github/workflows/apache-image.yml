@@ -55,7 +55,7 @@ jobs:
         /usr/lib/*/ossl-modules
         /var/www/html
       forbidden_packages: apt,libapt-pkg6.0,debian-archive-keyring,gpgv,bash,dash,dpkg
-      allowed_packages: apache2,apache2-bin,ca-certificates,libc6,libcrypt1,libexpat1,libssl3,media-types
+      allowed_packages: apache2,apache2-bin,ca-certificates,libapr1,libaprutil1,libc6,libcrypt1,libexpat1,libpcre2-8-0,libssl3,libuuid1,media-types
       config_path: images/apache/apache.conf
       entrypoint: '["/usr/sbin/apache2"]'
       cmd: '["-DFOREGROUND","-f","/etc/apache/apache.conf"]'

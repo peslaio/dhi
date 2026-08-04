@@ -7,7 +7,7 @@ There are two states:
 - `closure`: the image uses `runtime_closure`; the listed packages are the current shipped runtime package records.
 - `full-rootfs`: the image is not minimized yet; the listed packages are the required top-level package roots, and the package count shows how many dpkg package records are currently still present.
 
-Package counts were sampled from the published `linux/amd64` images in GHCR. The current closure keeps OpenSSL providers and `libssl3` on both supported architectures for `apache`, `haproxy`, and `nginx`.
+Closure package counts come from current native CI output; full-rootfs counts were sampled from published `linux/amd64` images in GHCR. The current closure keeps OpenSSL providers and `libssl3` on both supported architectures for `apache`, `haproxy`, and `nginx`.
 
 ## Runtime-Closure Images
 
@@ -15,13 +15,13 @@ These images already have a small package database. Keep these package sets tigh
 
 | Image | Tag | Packages | Keep packages |
 | --- | --- | ---: | --- |
-| `apache` | `2.4-bookworm` | 8 | `apache2`, `apache2-bin`, `ca-certificates`, `libc6`, `libcrypt1`, `libexpat1`, `libssl3`, `media-types` |
+| `apache` | `2.4-bookworm` | 12 | `apache2`, `apache2-bin`, `ca-certificates`, `libapr1`, `libaprutil1`, `libc6`, `libcrypt1`, `libexpat1`, `libpcre2-8-0`, `libssl3`, `libuuid1`, `media-types` |
 | `caddy` | `2-bookworm` | 3 | `ca-certificates`, `caddy`, `libc6` |
-| `haproxy` | `2.6-bookworm` | 9 | `ca-certificates`, `haproxy`, `libc6`, `libcap2`, `libcrypt1`, `libgcc-s1`, `libgpg-error0`, `liblzma5`, `libssl3` |
-| `memcached` | `1.6-bookworm` | 2 | `libc6`, `memcached` |
-| `nginx` | `1.22-bookworm` | 7 | `ca-certificates`, `libc6`, `libcrypt1`, `libssl3`, `nginx`, `nginx-common`, `zlib1g` |
-| `php-fpm` | `8.2-bookworm` | 18 | `ca-certificates`, `libbsd0`, `libc6`, `libcap2`, `libedit2`, `libffi8`, `libgcc-s1`, `libgpg-error0`, `liblzma5`, `libmd0`, `libssl3`, `libtinfo6`, `php8.2-common`, `php8.2-fpm`, `php8.2-opcache`, `php8.2-readline`, `tzdata`, `zlib1g` |
-| `redis` | `7.0-bookworm` | 7 | `libc6`, `libcap2`, `libgcc-s1`, `libgpg-error0`, `liblzma5`, `redis-server`, `redis-tools` |
+| `haproxy` | `2.6-bookworm` | 18 | `ca-certificates`, `haproxy`, `libc6`, `libcap2`, `libcrypt1`, `libgcc-s1`, `libgcrypt20`, `libgpg-error0`, `liblua5.3-0`, `liblz4-1`, `liblzma5`, `libopentracing-c-wrapper0`, `libopentracing1`, `libpcre2-8-0`, `libssl3`, `libstdc++6`, `libsystemd0`, `libzstd1` |
+| `memcached` | `1.6-bookworm` | 5 | `libc6`, `libevent-2.1-7`, `libsasl2-2`, `libssl3`, `memcached` |
+| `nginx` | `1.22-bookworm` | 8 | `ca-certificates`, `libc6`, `libcrypt1`, `libpcre2-8-0`, `libssl3`, `nginx`, `nginx-common`, `zlib1g` |
+| `php-fpm` | `8.2-bookworm` | 32 | `ca-certificates`, `libacl1`, `libapparmor1`, `libargon2-1`, `libbsd0`, `libc6`, `libcap2`, `libedit2`, `libffi8`, `libgcc-s1`, `libgcrypt20`, `libgpg-error0`, `libicu72`, `liblz4-1`, `liblzma5`, `libmd0`, `libpcre2-8-0`, `libsodium23`, `libssl3`, `libstdc++6`, `libsystemd0`, `libtinfo6`, `libxml2`, `libzstd1`, `php-common`, `php8.2-cli`, `php8.2-common`, `php8.2-fpm`, `php8.2-opcache`, `php8.2-readline`, `tzdata`, `zlib1g` |
+| `redis` | `7.0-bookworm` | 16 | `libatomic1`, `libc6`, `libcap2`, `libgcc-s1`, `libgcrypt20`, `libgpg-error0`, `libjemalloc2`, `liblz4-1`, `liblzf1`, `liblzma5`, `libssl3`, `libstdc++6`, `libsystemd0`, `libzstd1`, `redis-server`, `redis-tools` |
 
 ## Full-Rootfs Images
 

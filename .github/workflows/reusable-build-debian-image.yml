@@ -176,7 +176,7 @@ on:
         default: running
         type: string
       smoke_startup_timeout_seconds:
-        description: Seconds to wait for a daemon container to stay running and pass network smoke checks.
+        description: Maximum seconds for each daemon readiness phase in a running smoke test.
         required: false
         default: "30"
         type: string
@@ -912,6 +912,11 @@ jobs:
             exit 0
           fi
 
+          if ! [[ "$SMOKE_STARTUP_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+            echo "smoke_startup_timeout_seconds must be a positive integer: $SMOKE_STARTUP_TIMEOUT_SECONDS" >&2
+            exit 1
+          fi
+
           published_ports=()
           if [ -n "$SMOKE_HTTP_PORT" ]; then
             published_ports+=(--publish "127.0.0.1::${SMOKE_HTTP_PORT}")
@@ -1018,17 +1023,41 @@ jobs:
           fi
 
           if [ -n "$SMOKE_COMMAND" ]; then
-            if ! docker exec "$container" "${smoke_command_args[@]}" >/tmp/dif-smoke-output 2>&1; then
-              cat /tmp/dif-smoke-output
-              docker logs "$container"
-              exit 1
-            fi
-            if [ -n "$SMOKE_EXPECTED_OUTPUT" ]; then
-              if ! grep -q "$SMOKE_EXPECTED_OUTPUT" /tmp/dif-smoke-output; then
-                cat /tmp/dif-smoke-output
-                docker logs "$container"
-                exit 1
+            # A listening socket can precede process-local readiness state such
+            # as RabbitMQ's Erlang cookie, so retry the in-container probe too.
+            smoke_command_ready=false
+            smoke_command_deadline=$(( $(date +%s) + SMOKE_STARTUP_TIMEOUT_SECONDS ))
+            smoke_command_now="$(date +%s)"
+            : > /tmp/dif-smoke-output
+            while [ "$smoke_command_now" -lt "$smoke_command_deadline" ]; do
+              smoke_command_remaining=$(( smoke_command_deadline - smoke_command_now ))
+              smoke_command_attempt_timeout=10
+              if [ "$smoke_command_remaining" -lt "$smoke_command_attempt_timeout" ]; then
+                smoke_command_attempt_timeout="$smoke_command_remaining"
               fi
+              if timeout --signal=KILL "$smoke_command_attempt_timeout" \
+                docker exec "$container" "${smoke_command_args[@]}" >/tmp/dif-smoke-output 2>&1; then
+                if [ -z "$SMOKE_EXPECTED_OUTPUT" ] || grep -q "$SMOKE_EXPECTED_OUTPUT" /tmp/dif-smoke-output; then
+                  smoke_command_ready=true
+                  break
+                fi
+              fi
+              smoke_container_status="$(docker inspect "$container" --format '{{.State.Status}}' 2>/dev/null || true)"
+              if [ "$smoke_container_status" != "running" ]; then
+                break
+              fi
+              smoke_command_now="$(date +%s)"
+              if [ "$smoke_command_now" -lt "$smoke_command_deadline" ]; then
+                sleep 1
+                smoke_command_now="$(date +%s)"
+              fi
+            done
+            if [ "$smoke_command_ready" != "true" ]; then
+              echo "Smoke command did not become ready: $SMOKE_COMMAND" >&2
+              cat /tmp/dif-smoke-output 2>/dev/null || true
+              docker inspect "$container" --format 'status={{.State.Status}} exitCode={{.State.ExitCode}} error={{.State.Error}}' 2>/dev/null || true
+              docker logs "$container" 2>&1 || true
+              exit 1
             fi
           fi
 

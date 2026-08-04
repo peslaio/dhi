@@ -54,7 +54,7 @@ jobs:
       smoke_mode: running
       smoke_startup_timeout_seconds: "120"
       smoke_tcp_port: "5672"
-      smoke_command: /usr/sbin/rabbitmq-diagnostics -q ping
+      smoke_command: /usr/sbin/rabbitmq-diagnostics -q ping --timeout 5
       smoke_expected_output: Ping succeeded
       export_image: ${{ inputs.export_image }}
       generate_sbom: true

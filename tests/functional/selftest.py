@@ -619,6 +619,86 @@ class WorkflowPermissionTests(unittest.TestCase):
         )
         self.assertNotIn('exposed_ports: "5672 15672"', rabbitmq_workflow)
 
+    def test_running_smoke_command_retry_is_deadline_bounded(self):
+        root = pathlib.Path(__file__).resolve().parents[2]
+        workflow_dir = root / ".github" / "workflows"
+        build_workflow = (
+            workflow_dir / "reusable-build-debian-image.yml"
+        ).read_text(encoding="utf-8")
+        running_retry = build_workflow.rsplit(
+            'if [ -n "$SMOKE_COMMAND" ]; then', 1
+        )[1]
+
+        self.assertIn("smoke_command_deadline=", running_retry)
+        self.assertIn(
+            'timeout --signal=KILL "$smoke_command_attempt_timeout"',
+            running_retry,
+        )
+        self.assertIn(
+            'grep -q "$SMOKE_EXPECTED_OUTPUT" /tmp/dif-smoke-output',
+            running_retry,
+        )
+        self.assertIn(
+            'smoke_container_status="$(docker inspect',
+            running_retry,
+        )
+        self.assertIn("Smoke command did not become ready", running_retry)
+        self.assertIn(
+            "smoke_startup_timeout_seconds must be a positive integer",
+            build_workflow,
+        )
+
+        rabbitmq_workflow = (
+            workflow_dir / "rabbitmq-image.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "smoke_command: /usr/sbin/rabbitmq-diagnostics -q ping --timeout 5",
+            rabbitmq_workflow,
+        )
+
+    def test_closure_allowlists_match_package_inventory(self):
+        root = pathlib.Path(__file__).resolve().parents[2]
+        workflow_dir = root / ".github" / "workflows"
+        inventory_lines = (
+            root / "docs" / "package-inventory.md"
+        ).read_text(encoding="utf-8").splitlines()
+        closure_workflows = {
+            "apache": "apache-image.yml",
+            "caddy": "caddy-image.yml",
+            "haproxy": "haproxy-image.yml",
+            "memcached": "memcached-image.yml",
+            "nginx": "nginx-image.yml",
+            "php-fpm": "php-fpm-image.yml",
+            "redis": "redis-image.yml",
+        }
+
+        for image_name, workflow_name in closure_workflows.items():
+            with self.subTest(image=image_name):
+                workflow_lines = (
+                    workflow_dir / workflow_name
+                ).read_text(encoding="utf-8").splitlines()
+                allowed_line = next(
+                    line.strip()
+                    for line in workflow_lines
+                    if line.strip().startswith("allowed_packages:")
+                )
+                workflow_packages = allowed_line.partition(":")[2].strip().split(",")
+
+                inventory_line = next(
+                    line
+                    for line in inventory_lines
+                    if line.startswith(f"| `{image_name}` |")
+                )
+                columns = [
+                    column.strip()
+                    for column in inventory_line.strip("|").split("|")
+                ]
+                inventory_count = int(columns[2])
+                inventory_packages = columns[3].replace("`", "").split(", ")
+
+                self.assertEqual(inventory_count, len(workflow_packages))
+                self.assertEqual(inventory_packages, workflow_packages)
+
     def test_write_permissions_and_operations_are_confined_to_release_graph(self):
         root = pathlib.Path(__file__).resolve().parents[2]
         workflow_dir = root / ".github" / "workflows"

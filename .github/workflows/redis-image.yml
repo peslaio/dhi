@@ -44,7 +44,7 @@ jobs:
       runtime_closure_paths: |
         /etc/redis
       forbidden_packages: apt,libapt-pkg6.0,debian-archive-keyring,gpgv,bash,dash,dpkg
-      allowed_packages: libc6,libcap2,libgcc-s1,libgpg-error0,liblzma5,redis-server,redis-tools
+      allowed_packages: libatomic1,libc6,libcap2,libgcc-s1,libgcrypt20,libgpg-error0,libjemalloc2,liblz4-1,liblzf1,liblzma5,libssl3,libstdc++6,libsystemd0,libzstd1,redis-server,redis-tools
       entrypoint: '["/usr/bin/redis-server"]'
       cmd: '["/etc/redis/redis.conf"]'
       workdir: /data

@@ -1195,7 +1195,10 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIn("Capture image identity used by tests", build_workflow)
         self.assertIn('--expected-image-id "$TESTED_IMAGE_ID"', build_workflow)
         self.assertIn("actions/upload-artifact@", build_workflow)
-        self.assertIn("--attempt-${{ github.run_attempt }}", build_workflow)
+        self.assertIn(
+            "name: image-release-archive--${{ inputs.image_name }}--${{ inputs.image_version }}--${{ inputs.debian_suite }}--${{ inputs.debian_arch }}--attempt-${{ github.run_attempt }}",
+            build_workflow,
+        )
         self.assertIn(
             "artifact-name: sbom-${{ inputs.image_name }}-${{ inputs.image_version }}-${{ inputs.debian_suite }}-${{ inputs.debian_arch }}-attempt-${{ github.run_attempt }}",
             build_workflow,
@@ -1206,7 +1209,14 @@ class WorkflowPolicyTests(unittest.TestCase):
         publisher = (
             workflow_dir / "reusable-publish-tested-image.yml"
         ).read_text(encoding="utf-8")
-        self.assertIn("--attempt-${{ github.run_attempt }}", publisher)
+        self.assertIn(
+            "name: image-release-archive--${{ inputs.image_name }}--${{ matrix.version }}--${{ matrix.debian_suite }}--${{ matrix.debian_arch }}--attempt-${{ github.run_attempt }}",
+            publisher,
+        )
+        self.assertIn(
+            "name: image-release-digest--${{ inputs.image_name }}--${{ matrix.version }}--${{ matrix.debian_suite }}--${{ matrix.debian_arch }}--attempt-${{ github.run_attempt }}",
+            publisher,
+        )
         self.assertIn("Reject newer release inputs on main", publisher)
         self.assertIn("fetch-depth: 0", publisher)
         self.assertIn("git merge-base --is-ancestor", publisher)
@@ -1224,7 +1234,10 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIn(
             "git log --format= --name-only --no-renames", manifest_publisher
         )
-        self.assertIn("image-release-digest--", manifest_publisher)
+        self.assertIn(
+            "pattern: image-release-digest--${{ inputs.image_name }}--${{ inputs.image_version }}--${{ inputs.debian_suite }}--*--attempt-${{ github.run_attempt }}",
+            manifest_publisher,
+        )
         self.assertNotIn("source_tags", manifest_publisher)
         download_step = publisher.split(
             "uses: actions/download-artifact@", 1

@@ -88,6 +88,8 @@ Each application build workflow calls:
 
 Pull-request and merge-queue callers grant only read access. Per-family release wrappers first run the same read-only build and test graph with image export enabled. A separate write-scoped publisher then verifies the same-run archive, pushes and signs architecture tags, and calls `.github/workflows/reusable-publish-image-manifest.yml`.
 
+Release artifacts are scoped to one workflow attempt. Retry a failed release with **Re-run all jobs**; **Re-run failed jobs** intentionally fails closed rather than mixing artifacts from different attempts. See the [release permission boundary](docs/testing.md#release-permission-boundary).
+
 The build workflow:
 
 1. Creates a Debian rootfs with `mmdebstrap`.

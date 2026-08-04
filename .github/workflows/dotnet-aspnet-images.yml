@@ -6,15 +6,20 @@ on:
       - main
     paths:
       - .github/workflows/reusable-build-debian-image.yml
+      - .github/workflows/reusable-prepare-image-matrix.yml
       - .github/workflows/reusable-publish-image-manifest.yml
       - .github/workflows/dotnet-aspnet-images.yml
       - images/dotnet-aspnet/**
-  pull_request:
-    paths:
-      - .github/workflows/reusable-build-debian-image.yml
-      - .github/workflows/reusable-publish-image-manifest.yml
-      - .github/workflows/dotnet-aspnet-images.yml
-      - images/dotnet-aspnet/**
+  workflow_call:
+    inputs:
+      orchestrated:
+        required: false
+        default: false
+        type: boolean
+      push:
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
     inputs:
       push:
@@ -24,27 +29,22 @@ on:
         type: boolean
 
 concurrency:
-  group: dotnet-aspnet-images-${{ github.ref }}
+  group: dotnet-aspnet-images-${{ inputs.orchestrated && format('contracts-{0}', github.run_id) || format('publish-{0}', github.ref) }}
   cancel-in-progress: true
 
 jobs:
+  prepare:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/reusable-prepare-image-matrix.yml
+    with:
+      image_name: dotnet-aspnet
+
   dotnet-aspnet:
+    needs: prepare
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - dotnet_version: "8.0"
-            debian_arch: amd64
-            platform: linux/amd64
-          - dotnet_version: "9.0"
-            debian_arch: amd64
-            platform: linux/amd64
-          - dotnet_version: "10.0"
-            debian_arch: amd64
-            platform: linux/amd64
-          - dotnet_version: "10.0"
-            debian_arch: arm64
-            platform: linux/arm64
+      matrix: ${{ fromJSON(needs.prepare.outputs.build_matrix) }}
     permissions:
       actions: read
       contents: read
@@ -53,12 +53,12 @@ jobs:
     uses: ./.github/workflows/reusable-build-debian-image.yml
     with:
       image_name: dotnet-aspnet
-      image_version: ${{ matrix.dotnet_version }}
-      debian_suite: bookworm
+      image_version: ${{ matrix.version }}
+      debian_suite: ${{ matrix.debian_suite }}
       debian_arch: ${{ matrix.debian_arch }}
       platform: ${{ matrix.platform }}
       packages: ca-certificates
-      post_packages: aspnetcore-runtime-${{ matrix.dotnet_version }}
+      post_packages: aspnetcore-runtime-${{ matrix.version }}
       extra_apt_key_urls: |
         https://packages.microsoft.com/keys/microsoft.asc
       extra_apt_sources: |
@@ -76,26 +76,31 @@ jobs:
       smoke_command: /usr/bin/dotnet --list-runtimes
       smoke_expected_output: "Microsoft.AspNetCore.App"
       push_primary_tag: false
-      push: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.push) }}
+      push: ${{ !inputs.orchestrated && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.push)) }}
       generate_sbom: true
       scan: true
       fail_on_vulnerabilities: true
       sign: true
     secrets: inherit
 
+  contract-aggregate:
+    needs: [prepare, dotnet-aspnet]
+    if: ${{ always() }}
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/reusable-aggregate-image-contract.yml
+    with:
+      image_name: dotnet-aspnet
+      prepare_result: ${{ needs.prepare.result }}
+      build_result: ${{ needs['dotnet-aspnet'].result }}
+
   dotnet-aspnet-manifest:
-    needs: dotnet-aspnet
-    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.push) }}
+    needs: [prepare, contract-aggregate]
+    if: ${{ !inputs.orchestrated && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.push)) }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - dotnet_version: "8.0"
-            debian_arches: amd64
-          - dotnet_version: "9.0"
-            debian_arches: amd64
-          - dotnet_version: "10.0"
-            debian_arches: amd64 arm64
+      matrix: ${{ fromJSON(needs.prepare.outputs.manifest_matrix) }}
     permissions:
       contents: read
       id-token: write
@@ -103,8 +108,8 @@ jobs:
     uses: ./.github/workflows/reusable-publish-image-manifest.yml
     with:
       image_name: dotnet-aspnet
-      image_version: ${{ matrix.dotnet_version }}
-      debian_suite: bookworm
+      image_version: ${{ matrix.version }}
+      debian_suite: ${{ matrix.debian_suite }}
       debian_arches: ${{ matrix.debian_arches }}
       sign: true
     secrets: inherit

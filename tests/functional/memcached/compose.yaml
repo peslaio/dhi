@@ -1,0 +1,30 @@
+services:
+  app:
+    image: ${DHI_IMAGE_UNDER_TEST:?set DHI_IMAGE_UNDER_TEST}
+    pull_policy: never
+    platform: ${DHI_PLATFORM:?set DHI_PLATFORM}
+    labels:
+      io.pesla.dhi.functional.role: sut
+      io.pesla.dhi.functional.identity-mode: exact-container-image
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+  test:
+    build:
+      context: ../harness
+      args:
+        PYTHON_IMAGE: ${DHI_FIXTURE_PYTHON_IMAGE:?set DHI_FIXTURE_PYTHON_IMAGE}
+    pull_policy: never
+    labels:
+      io.pesla.dhi.functional.role: test
+    command: [memcached, --host, app]
+    depends_on: [app]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+networks:
+  default:
+    internal: true

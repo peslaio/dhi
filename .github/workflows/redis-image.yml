@@ -6,15 +6,20 @@ on:
       - main
     paths:
       - .github/workflows/reusable-build-debian-image.yml
+      - .github/workflows/reusable-prepare-image-matrix.yml
       - .github/workflows/reusable-publish-image-manifest.yml
       - .github/workflows/redis-image.yml
       - images/redis/**
-  pull_request:
-    paths:
-      - .github/workflows/reusable-build-debian-image.yml
-      - .github/workflows/reusable-publish-image-manifest.yml
-      - .github/workflows/redis-image.yml
-      - images/redis/**
+  workflow_call:
+    inputs:
+      orchestrated:
+        required: false
+        default: false
+        type: boolean
+      push:
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
     inputs:
       push:
@@ -24,25 +29,22 @@ on:
         type: boolean
 
 concurrency:
-  group: redis-image-${{ github.ref }}
+  group: redis-image-${{ inputs.orchestrated && format('contracts-{0}', github.run_id) || format('publish-{0}', github.ref) }}
   cancel-in-progress: true
 
 jobs:
+  prepare:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/reusable-prepare-image-matrix.yml
+    with:
+      image_name: redis
+
   redis:
+    needs: prepare
     strategy:
       fail-fast: false
-      matrix:
-        target:
-          - debian_arch: amd64
-            platform: linux/amd64
-            smoke_mode: running
-            smoke_command: /usr/bin/redis-cli ping
-            smoke_expected_output: PONG
-          - debian_arch: arm64
-            platform: linux/arm64
-            smoke_mode: oneshot
-            smoke_command: --version
-            smoke_expected_output: Redis server
+      matrix: ${{ fromJSON(needs.prepare.outputs.build_matrix) }}
     permissions:
       actions: read
       contents: read
@@ -51,10 +53,10 @@ jobs:
     uses: ./.github/workflows/reusable-build-debian-image.yml
     with:
       image_name: redis
-      image_version: "7.0"
-      debian_suite: bookworm
-      debian_arch: ${{ matrix.target.debian_arch }}
-      platform: ${{ matrix.target.platform }}
+      image_version: ${{ matrix.version }}
+      debian_suite: ${{ matrix.debian_suite }}
+      debian_arch: ${{ matrix.debian_arch }}
+      platform: ${{ matrix.platform }}
       packages: ca-certificates,redis-server,redis-tools
       runtime_closure: true
       runtime_closure_binaries: /usr/bin/redis-server /usr/bin/redis-cli
@@ -68,22 +70,37 @@ jobs:
       exposed_ports: "6379"
       config_path: images/redis/redis.conf
       writable_paths: /data /run/redis /var/lib/redis
-      smoke_mode: ${{ matrix.target.smoke_mode }}
+      smoke_mode: ${{ matrix.debian_arch == 'arm64' && 'oneshot' || 'running' }}
       smoke_tcp_port: "6379"
-      smoke_command: ${{ matrix.target.smoke_command }}
-      smoke_expected_output: ${{ matrix.target.smoke_expected_output }}
+      smoke_command: ${{ matrix.debian_arch == 'arm64' && '--version' || '/usr/bin/redis-cli ping' }}
+      smoke_expected_output: ${{ matrix.debian_arch == 'arm64' && 'Redis server' || 'PONG' }}
       remove_shell: true
       push_primary_tag: false
-      push: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.push) }}
+      push: ${{ !inputs.orchestrated && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.push)) }}
       generate_sbom: true
       scan: true
       fail_on_vulnerabilities: true
       sign: true
     secrets: inherit
 
+  contract-aggregate:
+    needs: [prepare, redis]
+    if: ${{ always() }}
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/reusable-aggregate-image-contract.yml
+    with:
+      image_name: redis
+      prepare_result: ${{ needs.prepare.result }}
+      build_result: ${{ needs.redis.result }}
+
   redis-manifest:
-    needs: redis
-    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.push) }}
+    needs: [prepare, contract-aggregate]
+    if: ${{ !inputs.orchestrated && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.push)) }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.manifest_matrix) }}
     permissions:
       contents: read
       id-token: write
@@ -91,7 +108,8 @@ jobs:
     uses: ./.github/workflows/reusable-publish-image-manifest.yml
     with:
       image_name: redis
-      image_version: "7.0"
-      debian_suite: bookworm
+      image_version: ${{ matrix.version }}
+      debian_suite: ${{ matrix.debian_suite }}
+      debian_arches: ${{ matrix.debian_arches }}
       sign: true
     secrets: inherit

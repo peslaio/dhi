@@ -4,6 +4,8 @@ This document compares DHI images with regular upstream application images using
 
 Generated on 2026-06-28 from available GHCR images. The collector prefers `ghcr.io/peslaio/*` and falls back to legacy `ghcr.io/tpesla/*` when an image has not yet been republished under the organization namespace.
 
+This is a historical published-image snapshot. The current PHP-FPM workflow intentionally expands its closure from 10 to 16 package records because the snapshot image omitted required dynamic PHP modules. Regenerate this report after the repaired images are published; do not interpret the old PHP count as a working minimum.
+
 Package names come from `/var/lib/dpkg/status` for Debian/Ubuntu images and `/lib/apk/db/installed` for Alpine images. Cross-package-manager comparisons, such as DHI Caddy `dpkg` vs upstream Caddy `apk`, are useful for size/surface comparison but package names are not one-to-one equivalent.
 
 ## Summary

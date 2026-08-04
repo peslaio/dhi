@@ -1,0 +1,38 @@
+services:
+  app:
+    image: ${DHI_DERIVED_IMAGE:?set DHI_DERIVED_IMAGE}
+    build:
+      context: .
+      args:
+        RUNTIME_IMAGE: ${DHI_IMAGE_UNDER_TEST:?set DHI_IMAGE_UNDER_TEST}
+        DHI_SOURCE_IMAGE_ID: ${DHI_SOURCE_IMAGE_ID:?set DHI_SOURCE_IMAGE_ID}
+        DOTNET_VERSION: ${DHI_IMAGE_VERSION:?set DHI_IMAGE_VERSION}
+        DOTNET_SDK_IMAGE: ${DHI_FIXTURE_DOTNET_SDK_IMAGE:?set DHI_FIXTURE_DOTNET_SDK_IMAGE}
+    pull_policy: never
+    platform: ${DHI_PLATFORM:?set DHI_PLATFORM}
+    labels:
+      io.pesla.dhi.functional.role: sut
+      io.pesla.dhi.functional.identity-mode: derived-rootfs-prefix
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+  test:
+    build:
+      context: ../harness
+      args:
+        PYTHON_IMAGE: ${DHI_FIXTURE_PYTHON_IMAGE:?set DHI_FIXTURE_PYTHON_IMAGE}
+    pull_policy: never
+    labels:
+      io.pesla.dhi.functional.role: test
+    command: [http, --url, http://app:8080/, --contains, dotnet-runtime-app-ok, --timeout, "120"]
+    depends_on: [app]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+networks:
+  default:
+    internal: true

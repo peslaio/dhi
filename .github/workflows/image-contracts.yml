@@ -1,0 +1,420 @@
+name: Image contracts
+
+on:
+  pull_request:
+  merge_group:
+    types: [checks_requested]
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: Use all or one image family name.
+        required: true
+        default: all
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-contracts-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.event.merge_group.head_sha || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate contract metadata and Compose contracts
+        run: ruby tests/functional/contractctl.rb validate
+
+      - name: Verify pinned fixture index platforms
+        if: ${{ github.event_name == 'schedule' || github.event_name == 'merge_group' || (github.event_name == 'workflow_dispatch' && inputs.scope == 'all') }}
+        run: python3 tests/functional/fixturectl.py validate --online
+
+      - name: Check Ruby syntax
+        run: ruby -c tests/functional/contractctl.rb
+
+      - name: Check Bash syntax
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' script; do
+            bash -n "$script"
+          done < <(find tests/functional -type f -name '*.sh' -print0)
+
+      - name: Check Python syntax
+        env:
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/dhi-python-cache
+        run: python3 -m compileall -q tests/functional
+
+      - name: Run contract control-plane self-tests
+        env:
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/dhi-python-cache
+        run: python3 tests/functional/selftest.py
+
+      - name: Lint GitHub Actions workflows
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/repo" \
+            --workdir /repo \
+            rhysd/actionlint:1.7.7@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9 \
+            -color
+
+  plan:
+    needs: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      plan: ${{ steps.plan.outputs.plan }}
+    steps:
+      - name: Check out repository history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Select expected contract legs
+        id: plan
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SCOPE: ${{ inputs.scope || 'all' }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+
+          case "$EVENT_NAME" in
+            pull_request)
+              git diff --name-only "$BASE_SHA...$HEAD_SHA" > artifacts/changed-files.txt
+              ;;
+            workflow_dispatch)
+              if [ "$SCOPE" = all ]; then
+                printf '%s\n' tests/functional/run.sh > artifacts/changed-files.txt
+              else
+                ruby tests/functional/contractctl.rb matrix --name "$SCOPE" --kind build >/dev/null
+                printf 'images/%s/image.yaml\n' "$SCOPE" > artifacts/changed-files.txt
+              fi
+              ;;
+            merge_group|schedule)
+              printf '%s\n' tests/functional/run.sh > artifacts/changed-files.txt
+              ;;
+            *)
+              echo "Unsupported image-contract event: $EVENT_NAME" >&2
+              exit 1
+              ;;
+          esac
+
+          plan="$(ruby tests/functional/contractctl.rb plan --files artifacts/changed-files.txt)"
+          printf '%s\n' "$plan" > artifacts/plan.json
+          echo "plan=$plan" >> "$GITHUB_OUTPUT"
+
+  apache:
+    needs: [preflight, plan]
+    if: ${{ contains(fromJSON(needs.plan.outputs.plan).selectedFamilies, 'apache') }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/apache-image.yml
+    with:
+      orchestrated: true
+      push: false
+
+  caddy:
+    needs: [preflight, plan]
+    if: ${{ contains(fromJSON(needs.plan.outputs.plan).selectedFamilies, 'caddy') }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/caddy-image.yml
+    with:
+      orchestrated: true
+      push: false
+
+  dotnet_aspnet:
+    needs: [preflight, plan]
+    if: ${{ contains(fromJSON(needs.plan.outputs.plan).selectedFamilies, 'dotnet-aspnet') }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/dotnet-aspnet-images.yml
+    with:
+      orchestrated: true
+      push: false
+
+  dotnet_runtime:
+    needs: [preflight, plan]
+    if: ${{ contains(fromJSON(needs.plan.outputs.plan).selectedFamilies, 'dotnet-runtime') }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/dotnet-runtime-images.yml
+    with:
+      orchestrated: true
+      push: false
+
+  haproxy:
+    needs: [preflight, plan]
+    if: ${{ contains(fromJSON(needs.plan.outputs.plan).selectedFamilies, 'haproxy') }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/haproxy-image.yml
+    with:
+      orchestrated: true
+      push: false
+
+  java_jre:
+    needs: [preflight, plan]
+    if: ${{ contains(fromJSON(needs.plan.outputs.plan).selectedFamilies, 'java-jre') }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/java-jre-image.yml
+    with:
+      orchestrated: true
+      push: false
+
+  mariadb:
+    needs: [preflight, plan]
+    if: ${{ contains(fromJSON(needs.plan.outputs.plan).selectedFamilies, 'mariadb') }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/mariadb-image.yml
+    with:
+      orchestrated: true
+      push: false
+
+  memcached:
+    needs: [preflight, plan]
+    if: ${{ contains(fromJSON(needs.plan.outputs.plan).selectedFamilies, 'memcached') }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/memcached-image.yml
+    with:
+      orchestrated: true
+      push: false
+
+  mongodb:
+    needs: [preflight, plan]
+    if: ${{ contains(fromJSON(needs.plan.outputs.plan).selectedFamilies, 'mongodb') }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/mongodb-image.yml
+    with:
+      orchestrated: true
+      push: false
+
+  nginx:
+    needs: [preflight, plan]
+    if: ${{ contains(fromJSON(needs.plan.outputs.plan).selectedFamilies, 'nginx') }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/nginx-image.yml
+    with:
+      orchestrated: true
+      push: false
+
+  node:
+    needs: [preflight, plan]
+    if: ${{ contains(fromJSON(needs.plan.outputs.plan).selectedFamilies, 'node') }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/node-image.yml
+    with:
+      orchestrated: true
+      push: false
+
+  php_fpm:
+    needs: [preflight, plan]
+    if: ${{ contains(fromJSON(needs.plan.outputs.plan).selectedFamilies, 'php-fpm') }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/php-fpm-image.yml
+    with:
+      orchestrated: true
+      push: false
+
+  postgresql:
+    needs: [preflight, plan]
+    if: ${{ contains(fromJSON(needs.plan.outputs.plan).selectedFamilies, 'postgresql') }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/postgresql-image.yml
+    with:
+      orchestrated: true
+      push: false
+
+  python:
+    needs: [preflight, plan]
+    if: ${{ contains(fromJSON(needs.plan.outputs.plan).selectedFamilies, 'python') }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/python-image.yml
+    with:
+      orchestrated: true
+      push: false
+
+  rabbitmq:
+    needs: [preflight, plan]
+    if: ${{ contains(fromJSON(needs.plan.outputs.plan).selectedFamilies, 'rabbitmq') }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/rabbitmq-image.yml
+    with:
+      orchestrated: true
+      push: false
+
+  redis:
+    needs: [preflight, plan]
+    if: ${{ contains(fromJSON(needs.plan.outputs.plan).selectedFamilies, 'redis') }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/redis-image.yml
+    with:
+      orchestrated: true
+      push: false
+
+  gate:
+    name: Image contract gate
+    needs:
+      - preflight
+      - plan
+      - apache
+      - caddy
+      - dotnet_aspnet
+      - dotnet_runtime
+      - haproxy
+      - java_jre
+      - mariadb
+      - memcached
+      - mongodb
+      - nginx
+      - node
+      - php_fpm
+      - postgresql
+      - python
+      - rabbitmq
+      - redis
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate selected and skipped caller results
+        id: topology
+        continue-on-error: true
+        env:
+          PLAN_JSON: ${{ needs.plan.outputs.plan }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          ruby -rjson -e '
+            plan = JSON.parse(ENV.fetch("PLAN_JSON"))
+            needs = JSON.parse(ENV.fetch("NEEDS_JSON"))
+            abort "preflight result is #{needs.dig("preflight", "result").inspect}" unless needs.dig("preflight", "result") == "success"
+            abort "plan result is #{needs.dig("plan", "result").inspect}" unless needs.dig("plan", "result") == "success"
+            family_jobs = {
+              "apache" => "apache", "caddy" => "caddy",
+              "dotnet-aspnet" => "dotnet_aspnet", "dotnet-runtime" => "dotnet_runtime",
+              "haproxy" => "haproxy", "java-jre" => "java_jre", "mariadb" => "mariadb",
+              "memcached" => "memcached", "mongodb" => "mongodb", "nginx" => "nginx",
+              "node" => "node", "php-fpm" => "php_fpm", "postgresql" => "postgresql",
+              "python" => "python", "rabbitmq" => "rabbitmq", "redis" => "redis"
+            }
+            selected = plan.fetch("selectedFamilies")
+            unknown = selected - family_jobs.keys
+            abort "plan selected unknown families: #{unknown.join(", ")}" unless unknown.empty?
+            family_jobs.each do |family, job|
+              expected = selected.include?(family) ? "success" : "skipped"
+              actual = needs.dig(job, "result")
+              abort "#{family} caller result is #{actual.inspect}; expected #{expected}" unless actual == expected
+            end
+          '
+
+      - name: Prepare aggregate directories and plan
+        if: ${{ always() }}
+        env:
+          PLAN_JSON: ${{ needs.plan.outputs.plan }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/results
+          printf '%s\n' "$PLAN_JSON" > artifacts/plan.json
+
+      - name: Download selected result artifacts
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: image-contract-result--*
+          path: artifacts/results
+
+      - name: Aggregate selected contract results
+        id: aggregate
+        if: ${{ always() }}
+        continue-on-error: true
+        run: ruby tests/functional/contractctl.rb aggregate --results artifacts/results --plan artifacts/plan.json
+
+      - name: Enforce stable image contract gate
+        if: ${{ always() }}
+        env:
+          TOPOLOGY_OUTCOME: ${{ steps.topology.outcome }}
+          AGGREGATE_OUTCOME: ${{ steps.aggregate.outcome }}
+        run: |
+          set -euo pipefail
+          test "$TOPOLOGY_OUTCOME" = success
+          test "$AGGREGATE_OUTCOME" = success

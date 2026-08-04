@@ -1,0 +1,41 @@
+x-runtime: &runtime
+  image: ${DHI_DERIVED_IMAGE:?set DHI_DERIVED_IMAGE}
+  pull_policy: never
+  platform: ${DHI_PLATFORM:?set DHI_PLATFORM}
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+
+services:
+  app:
+    <<: *runtime
+    build:
+      context: .
+      args:
+        RUNTIME_IMAGE: ${DHI_IMAGE_UNDER_TEST:?set DHI_IMAGE_UNDER_TEST}
+        DHI_SOURCE_IMAGE_ID: ${DHI_SOURCE_IMAGE_ID:?set DHI_SOURCE_IMAGE_ID}
+    labels:
+      io.pesla.dhi.functional.role: sut
+      io.pesla.dhi.functional.identity-mode: derived-rootfs-prefix
+    read_only: true
+    volumes:
+      - data:/var/lib/mysql
+    tmpfs:
+      - /run/mysqld:uid=10001,gid=0,mode=0770
+      - /var/log/mysql:uid=10001,gid=0,mode=0770
+      - /tmp:uid=10001,gid=0,mode=1777
+
+  test:
+    <<: *runtime
+    entrypoint: [/usr/local/bin/verify.sh]
+    labels:
+      io.pesla.dhi.functional.role: test
+    depends_on: [app]
+    read_only: true
+    tmpfs: [/tmp]
+
+volumes:
+  data: {}
+
+networks:
+  default:
+    internal: true

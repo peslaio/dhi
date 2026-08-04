@@ -1,0 +1,68 @@
+name: Reusable image contract aggregate
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        description: Image family whose expected results must be complete and passing.
+        required: true
+        type: string
+      prepare_result:
+        description: Result of the matrix preparation job.
+        required: true
+        type: string
+      build_result:
+        description: Aggregate result of the build matrix job.
+        required: true
+        type: string
+
+jobs:
+  aggregate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate prerequisite job results
+        id: topology
+        continue-on-error: true
+        env:
+          PREPARE_RESULT: ${{ inputs.prepare_result }}
+          BUILD_RESULT: ${{ inputs.build_result }}
+        run: |
+          set -euo pipefail
+          test "$PREPARE_RESULT" = success
+          test "$BUILD_RESULT" = success
+
+      - name: Download family result artifacts
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: image-contract-result--${{ inputs.image_name }}--*
+          path: artifacts/results
+
+      - name: Aggregate family results
+        id: aggregate
+        if: ${{ always() }}
+        continue-on-error: true
+        env:
+          IMAGE_NAME: ${{ inputs.image_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/results
+          ruby tests/functional/contractctl.rb aggregate --results artifacts/results --name "$IMAGE_NAME"
+
+      - name: Enforce family aggregate
+        if: ${{ always() }}
+        env:
+          TOPOLOGY_OUTCOME: ${{ steps.topology.outcome }}
+          AGGREGATE_OUTCOME: ${{ steps.aggregate.outcome }}
+        run: |
+          set -euo pipefail
+          test "$TOPOLOGY_OUTCOME" = success
+          test "$AGGREGATE_OUTCOME" = success

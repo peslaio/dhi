@@ -20,7 +20,7 @@ These images already have a small package database. Keep these package sets tigh
 | `haproxy` | `2.6-bookworm` | 9 | `ca-certificates`, `haproxy`, `libc6`, `libcap2`, `libcrypt1`, `libgcc-s1`, `libgpg-error0`, `liblzma5`, `libssl3` |
 | `memcached` | `1.6-bookworm` | 2 | `libc6`, `memcached` |
 | `nginx` | `1.22-bookworm` | 7 | `ca-certificates`, `libc6`, `libcrypt1`, `libssl3`, `nginx`, `nginx-common`, `zlib1g` |
-| `php-fpm` | `8.2-bookworm` | 10 | `ca-certificates`, `libc6`, `libcap2`, `libgcc-s1`, `libgpg-error0`, `liblzma5`, `php8.2-common`, `php8.2-fpm`, `tzdata`, `zlib1g` |
+| `php-fpm` | `8.2-bookworm` | 16 | `ca-certificates`, `libbsd0`, `libc6`, `libcap2`, `libedit2`, `libffi8`, `libgcc-s1`, `libgpg-error0`, `liblzma5`, `libmd0`, `libssl3`, `libtinfo6`, `php8.2-common`, `php8.2-fpm`, `tzdata`, `zlib1g` |
 | `redis` | `7.0-bookworm` | 7 | `libc6`, `libcap2`, `libgcc-s1`, `libgpg-error0`, `liblzma5`, `redis-server`, `redis-tools` |
 
 ## Full-Rootfs Images

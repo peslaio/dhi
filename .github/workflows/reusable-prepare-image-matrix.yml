@@ -1,0 +1,40 @@
+name: Reusable image matrix preparation
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        description: Image family declared in the functional contract registry.
+        required: true
+        type: string
+    outputs:
+      build_matrix:
+        description: Build and functional-test matrix generated from contract metadata.
+        value: ${{ jobs.prepare.outputs.build_matrix }}
+      manifest_matrix:
+        description: Manifest publication matrix generated from contract metadata.
+        value: ${{ jobs.prepare.outputs.manifest_matrix }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      build_matrix: ${{ steps.matrix.outputs.build_matrix }}
+      manifest_matrix: ${{ steps.matrix.outputs.manifest_matrix }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Generate matrices from contract metadata
+        id: matrix
+        env:
+          IMAGE_NAME: ${{ inputs.image_name }}
+        run: |
+          set -euo pipefail
+          build_matrix="$(ruby tests/functional/contractctl.rb matrix --name "$IMAGE_NAME" --kind build)"
+          manifest_matrix="$(ruby tests/functional/contractctl.rb matrix --name "$IMAGE_NAME" --kind manifest)"
+          echo "build_matrix=$build_matrix" >> "$GITHUB_OUTPUT"
+          echo "manifest_matrix=$manifest_matrix" >> "$GITHUB_OUTPUT"

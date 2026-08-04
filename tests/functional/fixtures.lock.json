@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-08-03",
+  "fixtures": {
+    "dotnet-sdk-8.0": {
+      "reference": "mcr.microsoft.com/dotnet/sdk:8.0@sha256:3c0edbfe1549dd93fb789dc96299a40df865ad7bffefcaf38e8c05940686d641",
+      "platforms": ["linux/amd64", "linux/arm64"]
+    },
+    "dotnet-sdk-9.0": {
+      "reference": "mcr.microsoft.com/dotnet/sdk:9.0@sha256:cb9d975bf57fd1b0915858d1db1184bea20f7f746f0536323fcab49673144e8c",
+      "platforms": ["linux/amd64", "linux/arm64"]
+    },
+    "dotnet-sdk-10.0": {
+      "reference": "mcr.microsoft.com/dotnet/sdk:10.0@sha256:72dd743782f2ae7e5476fd64f6a460045e3998dc862218b80e6944cba79a01b0",
+      "platforms": ["linux/amd64", "linux/arm64"]
+    },
+    "harness-python": {
+      "reference": "python:3.13-alpine@sha256:399babc8b49529dabfd9c922f2b5eea81d611e4512e3ed250d75bd2e7683f4b0",
+      "platforms": ["linux/amd64", "linux/arm64"]
+    },
+    "java-builder": {
+      "reference": "eclipse-temurin:17-jdk-jammy@sha256:723151f3fc88ca2060153ee08ab8dbbea7983d6ed6f2622fe440acf178737c94",
+      "platforms": ["linux/amd64", "linux/arm64"]
+    },
+    "php-nginx": {
+      "reference": "nginx:1.28-alpine@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236",
+      "platforms": ["linux/amd64", "linux/arm64"]
+    }
+  }
+}

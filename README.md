@@ -1,8 +1,8 @@
 # DHI
 
-DHI is a repository for building and publishing hardened Debian-based OCI images and matching Helm charts.
+DHI is an open-source project for building hardened Debian-based OCI runtime images and matching Helm charts.
 
-The project focuses on small runtime images, reproducible GitHub Actions workflows, multi-architecture publishing where upstream packages support it, and Kubernetes defaults that run as non-root.
+The project focuses on small runtime images, repeatable GitHub Actions workflows, application-level tests, multi-architecture publishing where upstream packages support it, and non-root execution. Builds are not yet bit-reproducible because Debian packages, repositories, and action references are not fully pinned.
 
 Owner: Tobiasz Pesla <tobiasz@pesla.io>
 
@@ -11,6 +11,7 @@ Owner: Tobiasz Pesla <tobiasz@pesla.io>
 - Reusable GitHub Actions for Debian rootfs image builds.
 - Per-application image workflows.
 - Runtime hardening: non-root users, cleaned package caches, optional shell removal, SBOM generation, Trivy scans, and cosign signatures.
+- Docker Compose application contracts for every image family.
 - Multi-arch manifest publishing for supported images.
 - Helm charts based on a shared `dhi-common` library chart.
 - A package inventory for tracking which packages are intentionally needed per image.
@@ -36,7 +37,19 @@ Current image families:
 - `rabbitmq`
 - `redis`
 
-Most images publish `linux/amd64` and `linux/arm64` manifests. Some upstream package sources are architecture-limited; for example, the current Debian bookworm MongoDB server package is `amd64` only.
+Most images target `linux/amd64` and `linux/arm64` on native GitHub-hosted runners. Some upstream package sources are architecture-limited: MongoDB 8.0 and the Microsoft Debian packages used for .NET 8 and 9 are currently published here only for `linux/amd64`; .NET 10 supports both platforms.
+
+## Maturity
+
+The repository is under active architecture and common-pattern development. The runtime-closure images provide measurable attack-surface reduction and are candidates for controlled evaluation, but the image portfolio is not yet a production-supported distribution.
+
+Read the evidence before adoption:
+
+- [Current architecture and weak points](docs/architecture.md)
+- [Image test strategy](docs/testing.md)
+- [Functional image contract decision](docs/adr/0001-functional-image-contracts.md)
+- [Conservative quality scorecard](docs/image-quality-scorecard.md)
+- [Package differences against upstream images](docs/package-diff-upstream.md)
 
 ## Package Inventory
 
@@ -79,18 +92,42 @@ The build workflow:
 3. Optionally copies a runtime closure into a smaller final rootfs.
 4. Removes package-manager/cache/doc/log artifacts where possible.
 5. Builds a `scratch`-based image.
-6. Runs smoke tests.
-7. Generates an SBOM.
-8. Scans with Trivy.
-9. Pushes and signs the image.
+6. Verifies package, user, shell, and package-manager policy.
+7. Runs a process smoke test and a representative application contract.
+8. Generates an SBOM and scans with Trivy.
+9. Pushes and signs architecture artifacts and the final manifest.
 
 ## Local Verification
 
 Run workflow syntax checks:
 
 ```bash
-docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:latest
+docker run --rm \
+  -v "$PWD:/repo" \
+  -w /repo \
+  rhysd/actionlint:1.7.7@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9 \
+  -color
 ```
+
+Validate all image specifications, functional suites, Compose policies, fixture pins, generated matrices, and negative control-plane tests:
+
+```bash
+ruby tests/functional/contractctl.rb validate
+python3 tests/functional/selftest.py
+python3 tests/functional/fixturectl.py validate
+```
+
+Run a functional image contract:
+
+```bash
+tests/functional/run.sh \
+  php-fpm \
+  ghcr.io/peslaio/php-fpm:8.2-bookworm \
+  8.2 \
+  linux/amd64
+```
+
+The image reference must exist in the local Docker image store. The test builds a small PHP application, places Nginx in front of PHP-FPM, verifies dynamic PHP modules, and checks the HTTP response. It writes a canonical `result.json` plus logs, identity proof, service state, and cleanup evidence. See [docs/testing.md](docs/testing.md) for every image contract and CI behavior.
 
 Run Helm checks for one chart:
 

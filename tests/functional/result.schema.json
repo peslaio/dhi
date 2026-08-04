@@ -1,0 +1,296 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pesla.io/schemas/dhi-functional-result-v1.json",
+  "title": "DHI functional contract result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "legId",
+    "run",
+    "contract",
+    "image",
+    "outcome",
+    "services",
+    "cleanup",
+    "evidence",
+    "secondaryFailures",
+    "warnings"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "legId": { "type": "string", "minLength": 1 },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "project", "startedAt", "finishedAt", "durationMs", "timeoutSeconds", "buildTimeoutSeconds"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "project": { "type": ["string", "null"] },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "finishedAt": { "type": "string", "format": "date-time" },
+        "durationMs": { "type": "integer", "minimum": 0 },
+        "timeoutSeconds": { "type": ["integer", "null"], "minimum": 1 },
+        "buildTimeoutSeconds": { "type": ["integer", "null"], "minimum": 1 }
+      }
+    },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["family", "version", "platform", "suite", "sutService", "testService"],
+      "properties": {
+        "family": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "platform": { "type": "string", "pattern": "^linux/(amd64|arm64)(/[^/]+)?$" },
+        "suite": { "type": "string", "minLength": 1 },
+        "sutService": { "type": ["string", "null"] },
+        "testService": { "type": ["string", "null"] }
+      }
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestedRef", "sourceAlias", "expectedId", "containerImageId", "os", "architecture", "variant", "identity"],
+      "properties": {
+        "requestedRef": { "type": "string", "minLength": 1 },
+        "sourceAlias": { "type": ["string", "null"] },
+        "expectedId": { "type": ["string", "null"] },
+        "containerImageId": { "type": ["string", "null"] },
+        "os": { "type": ["string", "null"] },
+        "architecture": { "type": ["string", "null"] },
+        "variant": { "type": ["string", "null"] },
+        "identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "verified", "sourceLayerCount", "containerLayerCount", "message"],
+          "properties": {
+            "mode": { "type": ["string", "null"], "enum": ["exact-container-image", "derived-rootfs-prefix", null] },
+            "verified": { "type": "boolean" },
+            "sourceLayerCount": { "type": ["integer", "null"], "minimum": 0 },
+            "containerLayerCount": { "type": ["integer", "null"], "minimum": 0 },
+            "message": { "type": "string" }
+          }
+        }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "classification", "phase", "exitCode", "rawExitCode", "message"],
+      "properties": {
+        "status": { "enum": ["pass", "fail"] },
+        "classification": {
+          "enum": ["pass", "invalid_invocation", "assertion_failure", "setup_readiness_failure", "identity_failure", "timeout", "infrastructure_failure", "evidence_cleanup_failure", "interrupted"]
+        },
+        "phase": { "type": "string", "minLength": 1 },
+        "exitCode": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "rawExitCode": { "type": ["integer", "null"] },
+        "message": { "type": "string" }
+      }
+    },
+    "services": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "role", "containerId", "containerName", "image", "imageId", "state", "health", "exitCode", "oomKilled"],
+        "properties": {
+          "name": { "type": "string" },
+          "role": { "enum": ["sut", "test", "fixture"] },
+          "containerId": { "type": ["string", "null"] },
+          "containerName": { "type": ["string", "null"] },
+          "image": { "type": ["string", "null"] },
+          "imageId": { "type": ["string", "null"] },
+          "state": { "type": ["string", "null"] },
+          "health": { "type": ["string", "null"] },
+          "exitCode": { "type": ["integer", "null"] },
+          "oomKilled": { "type": "boolean" }
+        }
+      }
+    },
+    "cleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "residualResources"],
+      "properties": {
+        "status": { "enum": ["success", "failure", "not-started"] },
+        "residualResources": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cleanupLog": { "const": "cleanup.log" },
+        "composeBuildLog": { "const": "compose-build.log" },
+        "composeConfig": { "const": "compose-config.yaml" },
+        "composeConfigJson": { "const": "compose-config.json" },
+        "composeCreateLog": { "const": "compose-create.log" },
+        "composeLog": { "const": "compose.log" },
+        "composePs": { "const": "compose-ps.json" },
+        "composeUpLog": { "const": "compose-up.log" },
+        "containerInspects": { "const": "containers" },
+        "fixtureLock": { "const": "fixtures.lock.json" },
+        "fixtureValidation": { "const": "fixture-validation.json" },
+        "identityProof": { "const": "identity.json" },
+        "sourceImageInspect": { "const": "source-image.inspect.json" },
+        "sutImageInspect": { "const": "sut-image.inspect.json" }
+      }
+    },
+    "secondaryFailures": { "type": "array", "items": { "type": "string" } },
+    "warnings": { "type": "array", "items": { "type": "string" } }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "type": "object",
+            "properties": { "status": { "const": "pass" } },
+            "required": ["status"]
+          }
+        },
+        "required": ["outcome"]
+      },
+      "then": {
+        "properties": {
+          "run": {
+            "type": "object",
+            "properties": {
+              "project": { "type": "string", "minLength": 1 },
+              "timeoutSeconds": { "type": "integer", "minimum": 1 },
+              "buildTimeoutSeconds": { "type": "integer", "minimum": 1 }
+            }
+          },
+          "contract": {
+            "type": "object",
+            "properties": {
+              "sutService": { "type": "string", "minLength": 1 },
+              "testService": { "type": "string", "minLength": 1 }
+            }
+          },
+          "image": {
+            "type": "object",
+            "properties": {
+              "sourceAlias": { "type": "string", "minLength": 1 },
+              "expectedId": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+              "containerImageId": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+              "os": { "const": "linux" },
+              "architecture": { "enum": ["amd64", "arm64"] },
+              "identity": {
+                "type": "object",
+                "properties": {
+                  "mode": { "enum": ["exact-container-image", "derived-rootfs-prefix"] },
+                  "verified": { "const": true },
+                  "sourceLayerCount": { "type": "integer", "minimum": 0 },
+                  "containerLayerCount": { "type": "integer", "minimum": 0 }
+                }
+              }
+            }
+          },
+          "outcome": {
+            "type": "object",
+            "properties": {
+              "classification": { "const": "pass" },
+              "phase": { "const": "complete" },
+              "exitCode": { "const": 0 },
+              "rawExitCode": { "const": 0 }
+            }
+          },
+          "services": {
+            "type": "array",
+            "minItems": 2,
+            "items": {
+              "type": "object",
+              "properties": {
+                "containerId": { "type": "string", "minLength": 1 },
+                "containerName": { "type": "string", "minLength": 1 },
+                "image": { "type": "string", "minLength": 1 },
+                "imageId": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+                "state": { "type": "string", "minLength": 1 },
+                "exitCode": { "type": "integer" },
+                "oomKilled": { "const": false }
+              }
+            },
+            "allOf": [
+              {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": { "role": { "const": "sut" } },
+                  "required": ["role"]
+                },
+                "minContains": 1,
+                "maxContains": 1
+              },
+              {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "role": { "const": "test" },
+                    "state": { "const": "exited" },
+                    "exitCode": { "const": 0 }
+                  },
+                  "required": ["role", "state", "exitCode"]
+                },
+                "minContains": 1,
+                "maxContains": 1
+              }
+            ]
+          },
+          "cleanup": {
+            "type": "object",
+            "properties": {
+              "status": { "const": "success" },
+              "residualResources": { "type": "array", "maxItems": 0 }
+            }
+          },
+          "evidence": {
+            "type": "object",
+            "required": [
+              "cleanupLog",
+              "composeBuildLog",
+              "composeConfig",
+              "composeConfigJson",
+              "composeCreateLog",
+              "composeLog",
+              "composePs",
+              "composeUpLog",
+              "containerInspects",
+              "fixtureLock",
+              "fixtureValidation",
+              "identityProof",
+              "sourceImageInspect",
+              "sutImageInspect"
+            ]
+          },
+          "secondaryFailures": { "type": "array", "maxItems": 0 }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "type": "object",
+            "properties": { "status": { "const": "fail" } },
+            "required": ["status"]
+          }
+        },
+        "required": ["outcome"]
+      },
+      "then": {
+        "properties": {
+          "outcome": {
+            "type": "object",
+            "properties": {
+              "classification": { "not": { "const": "pass" } },
+              "exitCode": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

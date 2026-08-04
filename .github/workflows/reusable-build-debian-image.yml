@@ -200,6 +200,11 @@ on:
         required: false
         default: ""
         type: string
+      functional_test:
+        description: Run the repository's Docker Compose application contract for this image.
+        required: false
+        default: true
+        type: boolean
       remove_shell:
         description: Remove common shell binaries from the runtime rootfs.
         required: false
@@ -258,7 +263,8 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.debian_arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 90
     permissions:
       actions: read
       contents: read
@@ -273,17 +279,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up QEMU
-        if: inputs.debian_arch != 'amd64'
-        uses: docker/setup-qemu-action@v4
-        with:
-          platforms: ${{ inputs.debian_arch == 'arm64' && 'arm64' || 'all' }}
-
       - name: Install rootfs build dependencies
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends mmdebstrap arch-test ca-certificates curl gnupg debian-archive-keyring qemu-user-static binfmt-support
+          sudo apt-get install -y --no-install-recommends mmdebstrap arch-test ca-certificates curl gnupg debian-archive-keyring libcap2-bin
 
       - name: Prepare image metadata
         id: meta
@@ -332,6 +332,7 @@ jobs:
           RUNTIME_USER_NAME: ${{ inputs.runtime_user_name }}
           RUNTIME_HOME: ${{ inputs.runtime_home }}
           RUNTIME_SHELL: ${{ inputs.runtime_shell }}
+          RUN_USER: ${{ inputs.run_user }}
           RUN_UID: ${{ inputs.run_uid }}
           RUN_GID: ${{ inputs.run_gid }}
           WRITABLE_PATHS: ${{ inputs.writable_paths }}
@@ -339,11 +340,35 @@ jobs:
         run: |
           set -euo pipefail
 
+          if ! [[ "$RUN_UID" =~ ^[0-9]+$ ]] || [ "$RUN_UID" -eq 0 ]; then
+            echo "run_uid must be a non-zero numeric UID, got: $RUN_UID" >&2
+            exit 1
+          fi
+          if ! [[ "$RUN_GID" =~ ^[0-9]+$ ]]; then
+            echo "run_gid must be numeric, got: $RUN_GID" >&2
+            exit 1
+          fi
+          if [ "$RUN_USER" != "${RUN_UID}:${RUN_GID}" ]; then
+            echo "run_user must match run_uid:run_gid (${RUN_UID}:${RUN_GID}), got: $RUN_USER" >&2
+            exit 1
+          fi
+
           build_dir="$GITHUB_WORKSPACE/.build/${IMAGE_NAME}"
           rootfs="$build_dir/rootfs"
           security_suite="${DEBIAN_SUITE}-security"
           host_arch="$(dpkg --print-architecture)"
-          qemu_binary=""
+
+          case "$DEBIAN_ARCH" in
+            amd64|arm64) ;;
+            *)
+              echo "Unsupported Debian architecture: $DEBIAN_ARCH" >&2
+              exit 1
+              ;;
+          esac
+          if [ "$DEBIAN_ARCH" != "$host_arch" ]; then
+            echo "Native runner architecture $host_arch does not match requested architecture $DEBIAN_ARCH" >&2
+            exit 1
+          fi
 
           rm -rf "$build_dir"
           mkdir -p "$rootfs"
@@ -357,18 +382,6 @@ jobs:
             "$rootfs" \
             "deb $DEBIAN_MIRROR $DEBIAN_SUITE main" \
             "deb $DEBIAN_SECURITY_MIRROR $security_suite main"
-
-          if [ "$DEBIAN_ARCH" != "$host_arch" ]; then
-            case "$DEBIAN_ARCH" in
-              arm64) qemu_binary=/usr/bin/qemu-aarch64-static ;;
-              amd64) qemu_binary=/usr/bin/qemu-x86_64-static ;;
-              *)
-                echo "Unsupported foreign architecture for chroot execution: $DEBIAN_ARCH" >&2
-                exit 1
-                ;;
-            esac
-            sudo install -m 0755 "$qemu_binary" "$rootfs$qemu_binary"
-          fi
 
           if [ -n "$EXTRA_APT_KEY_URLS" ] || [ -n "$EXTRA_APT_SOURCES" ]; then
             sudo mkdir -p "$rootfs/etc/apt/trusted.gpg.d" "$rootfs/etc/apt/sources.list.d"
@@ -407,6 +420,11 @@ jobs:
             sudo sed -i -E "s#^${runtime_user_name}:x:[0-9]+:[0-9]+:([^:]*):[^:]*:[^:]*#${runtime_user_name}:x:${RUN_UID}:${RUN_GID}:\1:${RUNTIME_HOME}:${RUNTIME_SHELL}#" "$rootfs/etc/passwd"
           else
             echo "${runtime_user_name}:x:${RUN_UID}:${RUN_GID}:${runtime_user_name} runtime:${RUNTIME_HOME}:${RUNTIME_SHELL}" | sudo tee -a "$rootfs/etc/passwd" >/dev/null
+          fi
+          runtime_identity="$(awk -F: -v name="$runtime_user_name" '$1 == name { print $3 ":" $4; count++ } END { if (count != 1) exit 1 }' "$rootfs/etc/passwd")"
+          if [ "$runtime_identity" != "${RUN_UID}:${RUN_GID}" ]; then
+            echo "Runtime passwd identity mismatch for $runtime_user_name: $runtime_identity" >&2
+            exit 1
           fi
 
           final_rootfs="$rootfs"
@@ -511,21 +529,25 @@ jobs:
 
             shopt -s nullglob dotglob
             for binary_pattern in $RUNTIME_CLOSURE_BINARIES; do
-              binary_pattern_matched=false
-              for expanded in "$rootfs"$binary_pattern; do
-                binary_pattern_matched=true
+              mapfile -t binary_matches < <(compgen -G "${rootfs}${binary_pattern}" || true)
+              if [ "${#binary_matches[@]}" -eq 0 ]; then
+                echo "Runtime closure binary pattern did not match any files: $binary_pattern" >&2
+                exit 1
+              fi
+              for expanded in "${binary_matches[@]}"; do
                 binary="/${expanded#"$rootfs"/}"
                 copy_runtime_path "$binary"
                 copy_elf_dependencies "$binary"
               done
-              if [ "$binary_pattern_matched" != "true" ]; then
-                echo "Runtime closure binary pattern did not match any files: $binary_pattern" >&2
-                exit 1
-              fi
             done
 
             for closure_path in $RUNTIME_CLOSURE_PATHS; do
-              for expanded in "$rootfs"$closure_path; do
+              mapfile -t closure_matches < <(compgen -G "${rootfs}${closure_path}" || true)
+              if [ "${#closure_matches[@]}" -eq 0 ]; then
+                echo "Runtime closure path pattern did not match any files: $closure_path" >&2
+                exit 1
+              fi
+              for expanded in "${closure_matches[@]}"; do
                 rel="/${expanded#"$rootfs"/}"
                 copy_runtime_path "$rel"
               done
@@ -617,8 +639,18 @@ jobs:
             sudo rm -f "$final_rootfs/bin/sh" "$final_rootfs/bin/bash" "$final_rootfs/usr/bin/bash"
           fi
 
-          if [ -n "$qemu_binary" ]; then
-            sudo rm -f "$final_rootfs$qemu_binary"
+          sudo find "$final_rootfs" -xdev -type f -perm /6000 -exec chmod u-s,g-s {} +
+          while IFS= read -r capability_file; do
+            [ -n "$capability_file" ] || continue
+            sudo setcap -r "$capability_file"
+          done < <(sudo getcap -r "$final_rootfs" 2>/dev/null | sed 's/[[:space:]].*$//')
+
+          privileged_files="$(sudo find "$final_rootfs" -xdev -type f -perm /6000 -print)"
+          capability_files="$(sudo getcap -r "$final_rootfs" 2>/dev/null || true)"
+          if [ -n "$privileged_files" ] || [ -n "$capability_files" ]; then
+            printf '%s\n' "$privileged_files" "$capability_files" >&2
+            echo "Runtime rootfs retains setuid, setgid, or file-capability privilege" >&2
+            exit 1
           fi
 
           if [ -n "$FORBIDDEN_PACKAGES" ] && [ -f "$final_rootfs/var/lib/dpkg/status" ]; then
@@ -738,27 +770,46 @@ jobs:
             "${tag_args[@]}" \
             "$build_dir"
 
-      - name: Verify shell hardening
+      - name: Verify static image contract
         env:
           PRIMARY_TAG: ${{ steps.meta.outputs.primary_tag }}
           IMAGE_NAME: ${{ inputs.image_name }}
           REMOVE_SHELL: ${{ inputs.remove_shell }}
+          RUN_USER: ${{ inputs.run_user }}
+          RUN_UID: ${{ inputs.run_uid }}
+          RUN_GID: ${{ inputs.run_gid }}
         run: |
           set -euo pipefail
-          if [ "$REMOVE_SHELL" != "true" ]; then
-            exit 0
+
+          configured_user="$(docker inspect "$PRIMARY_TAG" --format '{{.Config.User}}')"
+          expected_user="${RUN_UID}:${RUN_GID}"
+          if [ "$configured_user" != "$expected_user" ] || [ "$configured_user" != "$RUN_USER" ]; then
+            echo "Image USER mismatch: expected $expected_user, got ${configured_user:-<empty>}" >&2
+            exit 1
           fi
 
-          container="dif-${IMAGE_NAME}-shell-check"
+          container="dif-${IMAGE_NAME}-static-check"
           docker rm -f "$container" >/dev/null 2>&1 || true
           container_id="$(docker create --name "$container" "$PRIMARY_TAG")"
           trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
 
-          shell_entries="$(docker export "$container_id" | tar -tf - | grep -Ex 'bin/sh|bin/bash|usr/bin/bash' || true)"
-          if [ -n "$shell_entries" ]; then
-            printf '%s\n' "$shell_entries"
-            echo "Shell binaries are present even though remove_shell=true" >&2
+          rootfs_listing="/tmp/dif-${IMAGE_NAME}-rootfs-files"
+          docker export "$container_id" | tar -tf - > "$rootfs_listing"
+
+          apt_entries="$(grep -Ex 'usr/bin/apt|usr/bin/apt-cache|usr/bin/apt-config|usr/bin/apt-get|usr/bin/apt-key' "$rootfs_listing" || true)"
+          if [ -n "$apt_entries" ]; then
+            printf '%s\n' "$apt_entries"
+            echo "APT executables are present in the runtime image" >&2
             exit 1
+          fi
+
+          if [ "$REMOVE_SHELL" = "true" ]; then
+            shell_entries="$(grep -Ex 'bin/(sh|ash|bash|busybox|dash|ksh|zsh)|usr/bin/(sh|ash|bash|busybox|dash|ksh|zsh)' "$rootfs_listing" || true)"
+            if [ -n "$shell_entries" ]; then
+              printf '%s\n' "$shell_entries"
+              echo "Shell-capable binaries are present even though remove_shell=true" >&2
+              exit 1
+            fi
           fi
 
       - name: Smoke test image
@@ -829,8 +880,6 @@ jobs:
             docker logs "$container"
             exit 1
           fi
-
-          docker inspect "$container" --format '{{.Config.User}}' | grep -q '[1-9]'
 
           mapped_endpoint() {
             local port="$1"
@@ -925,6 +974,41 @@ jobs:
                 exit 1
               fi
             fi
+          fi
+
+      - name: Run functional application contract
+        id: functional
+        if: inputs.functional_test
+        continue-on-error: true
+        env:
+          IMAGE_NAME: ${{ inputs.image_name }}
+          IMAGE_VERSION: ${{ inputs.image_version }}
+          PLATFORM: ${{ inputs.platform }}
+          PRIMARY_TAG: ${{ steps.meta.outputs.primary_tag }}
+          DHI_FUNCTIONAL_ARTIFACT_DIR: artifacts/functional
+        run: |
+          set -euo pipefail
+          tests/functional/run.sh "$IMAGE_NAME" "$PRIMARY_TAG" "$IMAGE_VERSION" "$PLATFORM"
+
+      - name: Upload functional contract evidence
+        if: ${{ always() && inputs.functional_test }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-contract-result--${{ inputs.image_name }}--${{ inputs.image_version }}--${{ inputs.debian_arch }}
+          path: artifacts/functional
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
+
+      - name: Enforce functional application contract
+        if: ${{ always() && inputs.functional_test }}
+        env:
+          FUNCTIONAL_OUTCOME: ${{ steps.functional.outcome }}
+        run: |
+          set -euo pipefail
+          if [ "$FUNCTIONAL_OUTCOME" != "success" ]; then
+            echo "Functional application contract outcome: $FUNCTIONAL_OUTCOME" >&2
+            exit 1
           fi
 
       - name: Generate SBOM

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import base64
 import json
+import os
 import pathlib
+import re
 import sys
 import time
 import urllib.error
@@ -15,6 +17,41 @@ class AssertionFailure(RuntimeError):
 
 class ReadinessFailure(RuntimeError):
     pass
+
+
+class AssertionRecorder:
+    def __init__(self):
+        self.records = []
+        self.ids = set()
+
+    def record_pass(self, assertion_id):
+        if not re.fullmatch(r"[a-z0-9][a-z0-9._-]*", assertion_id):
+            raise AssertionFailure(
+                f"RabbitMQ assertion ID is not canonical: {assertion_id}"
+            )
+        if assertion_id in self.ids:
+            raise AssertionFailure(
+                f"RabbitMQ assertion ID was recorded twice: {assertion_id}"
+            )
+        self.ids.add(assertion_id)
+        self.records.append({"id": assertion_id, "status": "pass"})
+
+    def emit(self):
+        print(
+            "DHI_ASSERTION_SUMMARY "
+            + json.dumps(
+                {
+                    "assertions": self.records,
+                    "counts": {"fail": 0, "pass": len(self.records)},
+                    "outcome": "pass",
+                    "schemaVersion": 1,
+                    "suite": "rabbitmq",
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            flush=True,
+        )
 
 
 HOST = "app"
@@ -90,6 +127,13 @@ def require_status(status, expected, description):
 
 
 def main():
+    lifecycle_phase = os.environ.get("DHI_LIFECYCLE_PHASE")
+    if lifecycle_phase not in {"initial", "restart"}:
+        raise AssertionFailure(
+            "RabbitMQ lifecycle phase must be exactly initial or restart"
+        )
+
+    assertions = AssertionRecorder()
     password = read_password()
 
     def authenticated_overview():
@@ -97,13 +141,16 @@ def main():
         return status == 200
 
     wait_until("authenticated RabbitMQ management API", authenticated_overview)
+    assertions.record_pass("auth.management_ready")
 
     wrong_status, _ = request("/api/overview", USERNAME, "definitely-wrong")
     require_status(wrong_status, {401, 403}, "wrong-password request")
+    assertions.record_pass("auth.wrong_password_rejected")
     print("RabbitMQ rejected an incorrect application password as expected")
 
     guest_status, _ = request("/api/overview", "guest", "guest")
     require_status(guest_status, {401, 403}, "remote guest request")
+    assertions.record_pass("auth.remote_guest_rejected")
     print("RabbitMQ rejected remote guest access as expected")
 
     forbidden_status, _ = request(
@@ -113,6 +160,7 @@ def main():
         raise AssertionFailure(
             "RabbitMQ application user unexpectedly obtained vhost-administration privileges"
         )
+    assertions.record_pass("authorization.vhost_admin_denied")
     print("RabbitMQ application user was denied vhost administration as expected")
 
     vhost = encode_path(VHOST)
@@ -128,6 +176,32 @@ def main():
     exchange_path = f"/api/exchanges/{vhost}/{exchange}"
     queue_path = f"/api/queues/{vhost}/{queue}"
     marker_queue_path = f"/api/queues/{vhost}/{marker_queue}"
+
+    def resource_list(resource_type, description):
+        status, body = request(
+            f"/api/{resource_type}/{vhost}", USERNAME, password
+        )
+        require_status(status, {200}, description)
+        resources = decode_json(body, description)
+        if not isinstance(resources, list):
+            raise AssertionFailure(f"{description} did not return a resource list")
+        return resources
+
+    def queue_names():
+        queues = resource_list("queues", "vhost queue inventory")
+        names = [queue_state.get("name") for queue_state in queues]
+        if any(not isinstance(name, str) or not name for name in names):
+            raise AssertionFailure("RabbitMQ queue inventory contained an invalid name")
+        return sorted(names)
+
+    def custom_exchange_names():
+        exchanges = resource_list("exchanges", "vhost exchange inventory")
+        names = [exchange_state.get("name") for exchange_state in exchanges]
+        if any(not isinstance(name, str) for name in names):
+            raise AssertionFailure("RabbitMQ exchange inventory contained an invalid name")
+        return sorted(
+            name for name in names if name and not name.startswith("amq.")
+        )
 
     def assert_durable_exchange(body, description):
         state = decode_json(body, description)
@@ -148,18 +222,60 @@ def main():
             )
         return state
 
+    def assert_exact_binding(bound_queue, routing_key_value, description):
+        status, body = request(
+            f"/api/bindings/{vhost}/e/{exchange}/q/{bound_queue}",
+            USERNAME,
+            password,
+        )
+        require_status(status, {200}, description)
+        bindings = decode_json(body, description)
+        if (
+            not isinstance(bindings, list)
+            or len(bindings) != 1
+            or bindings[0].get("routing_key") != routing_key_value
+            or bindings[0].get("arguments") != {}
+        ):
+            raise AssertionFailure(
+                f"{description} did not contain exactly the expected binding"
+            )
+
     def marker_message_is_ready():
         status, body = request(marker_queue_path, USERNAME, password)
         if status != 200:
             return False
         state = decode_json(body, "lifecycle-marker queue-depth inspection")
-        message_count = state.get("messages") or 0
-        ready_count = state.get("messages_ready") or 0
+        message_count = state.get("messages")
+        ready_count = state.get("messages_ready")
+        if type(message_count) is not int or type(ready_count) is not int:
+            raise AssertionFailure(
+                "RabbitMQ lifecycle-marker queue returned invalid message counts"
+            )
         if message_count > 1 or ready_count > 1:
             raise AssertionFailure(
                 "RabbitMQ lifecycle-marker queue contains duplicate messages"
             )
         return message_count == 1 and ready_count == 1
+
+    def persisted_contract_queue_is_empty():
+        status, body = request(queue_path, USERNAME, password)
+        if status != 200:
+            return False
+        state = decode_json(body, "persisted contract queue-depth inspection")
+        counts = (
+            state.get("messages"),
+            state.get("messages_ready"),
+            state.get("messages_unacknowledged"),
+        )
+        if any(value is not None and type(value) is not int for value in counts):
+            raise AssertionFailure(
+                "RabbitMQ persisted contract queue returned invalid message counts"
+            )
+        if any(value is not None and value < 0 for value in counts):
+            raise AssertionFailure(
+                "RabbitMQ persisted contract queue returned negative message counts"
+            )
+        return counts == (0, 0, 0)
 
     def verify_requeued_marker(context):
         try:
@@ -205,28 +321,61 @@ def main():
     marker_status, marker_body = request(marker_queue_path, USERNAME, password)
     persisted_statuses = (exchange_status, queue_status, marker_status)
 
-    if persisted_statuses == (404, 404, 404):
-        lifecycle_phase = "initial"
+    if lifecycle_phase == "initial":
+        if persisted_statuses != (404, 404, 404):
+            raise AssertionFailure(
+                "RabbitMQ initial lifecycle phase did not start without contract "
+                "resources: "
+                f"exchange={exchange_status} contract_queue={queue_status} "
+                f"marker_queue={marker_status}"
+            )
+        if queue_names() != [] or custom_exchange_names() != []:
+            raise AssertionFailure(
+                "RabbitMQ initial lifecycle phase did not start with empty "
+                "application topology"
+            )
         print("RabbitMQ lifecycle resources are absent on the fresh data volume as expected")
-    elif persisted_statuses == (200, 200, 200):
-        lifecycle_phase = "restart"
+    else:
+        if persisted_statuses != (200, 200, 200):
+            raise AssertionFailure(
+                "RabbitMQ restart lifecycle resources are incomplete: "
+                f"exchange={exchange_status} contract_queue={queue_status} "
+                f"marker_queue={marker_status}"
+            )
         assert_durable_exchange(exchange_body, "persisted exchange")
-        contract_state = assert_durable_queue(queue_body, "persisted contract queue")
+        assert_durable_queue(queue_body, "persisted contract queue")
         assert_durable_queue(marker_body, "persisted lifecycle-marker queue")
-        if (contract_state.get("messages") or 0) != 0:
+        try:
+            wait_until(
+                "restart contract queue drain",
+                persisted_contract_queue_is_empty,
+                timeout=60,
+            )
+        except ReadinessFailure as error:
             raise AssertionFailure(
                 "RabbitMQ restart found an unexpected message in the contract queue"
+            ) from error
+        if queue_names() != sorted([queue_name, marker_queue_name]):
+            raise AssertionFailure(
+                "RabbitMQ restart did not preserve the exact durable queue set"
             )
+        if custom_exchange_names() != [exchange_name]:
+            raise AssertionFailure(
+                "RabbitMQ restart did not preserve the exact custom exchange set"
+            )
+        assert_exact_binding(
+            queue, routing_key, "persisted contract queue binding"
+        )
+        assert_exact_binding(
+            marker_queue,
+            marker_routing_key,
+            "persisted lifecycle-marker queue binding",
+        )
         verify_requeued_marker("restart")
+        assertions.record_pass("persistence.lifecycle_marker")
         print(
             "RabbitMQ verified the durable exchange, queues, and persistent marker "
             "before idempotent declarations"
-        )
-    else:
-        raise AssertionFailure(
-            "RabbitMQ lifecycle resources are inconsistent before declarations: "
-            f"exchange={exchange_status} contract_queue={queue_status} "
-            f"marker_queue={marker_status}"
         )
 
     exchange_payload = {
@@ -262,6 +411,7 @@ def main():
             require_status(
                 status, {201, 204}, f"{attempt} durable {description} declaration"
             )
+    assertions.record_pass("topology.idempotent_declarations")
 
     for bound_queue, bound_key, description in (
         (queue, routing_key, "contract queue binding"),
@@ -276,9 +426,24 @@ def main():
         )
         require_status(status, {201, 204}, description)
 
+    status, body = request(exchange_path, USERNAME, password)
+    require_status(status, {200}, "durable exchange inspection")
+    assert_durable_exchange(body, "durable exchange inspection")
+    assertions.record_pass("topology.durable_exchange")
+
     status, body = request(queue_path, USERNAME, password)
-    require_status(status, {200}, "durable queue inspection")
-    assert_durable_queue(body, "durable queue inspection")
+    require_status(status, {200}, "durable contract queue inspection")
+    assert_durable_queue(body, "durable contract queue inspection")
+    status, body = request(marker_queue_path, USERNAME, password)
+    require_status(status, {200}, "durable lifecycle-marker queue inspection")
+    assert_durable_queue(body, "durable lifecycle-marker queue inspection")
+    assert_exact_binding(queue, routing_key, "contract queue binding inspection")
+    assert_exact_binding(
+        marker_queue,
+        marker_routing_key,
+        "lifecycle-marker queue binding inspection",
+    )
+    assertions.record_pass("topology.durable_queues")
 
     status, body = request(
         f"/api/exchanges/{vhost}/{exchange}/publish",
@@ -300,9 +465,15 @@ def main():
         status, body = request(queue_path, USERNAME, password)
         if status != 200:
             return False
-        return (decode_json(body, "queue depth inspection").get("messages_ready") or 0) >= 1
+        queue_depth = decode_json(body, "queue depth inspection")
+        return (
+            queue_depth.get("messages") == 1
+            and queue_depth.get("messages_ready") == 1
+            and queue_depth.get("messages_unacknowledged") == 0
+        )
 
     wait_until("persistent message visibility", contract_message_is_ready, timeout=60)
+    assertions.record_pass("messaging.persistent_publish")
 
     get_path = f"/api/queues/{vhost}/{queue}/get"
     requeue_payload = {
@@ -323,6 +494,7 @@ def main():
     ):
         raise AssertionFailure("RabbitMQ requeue consume returned the wrong persistent message")
     wait_until("requeued message visibility", contract_message_is_ready, timeout=60)
+    assertions.record_pass("messaging.requeue")
 
     requeue_payload["ackmode"] = "ack_requeue_false"
     status, body = request(
@@ -332,15 +504,21 @@ def main():
     messages = decode_json(body, "acknowledged consume")
     if len(messages) != 1 or messages[0].get("payload") != "rabbitmq-persistent-ok":
         raise AssertionFailure("RabbitMQ acknowledged consume returned the wrong message")
+    assertions.record_pass("messaging.acknowledge")
 
     def queue_is_empty():
         status, body = request(queue_path, USERNAME, password)
         if status != 200:
             return False
         queue_depth = decode_json(body, "acknowledged queue-depth inspection")
-        return (queue_depth.get("messages") or 0) == 0
+        return (
+            queue_depth.get("messages") == 0
+            and queue_depth.get("messages_ready") == 0
+            and queue_depth.get("messages_unacknowledged") == 0
+        )
 
     wait_until("acknowledged queue drain", queue_is_empty, timeout=60)
+    assertions.record_pass("state.queue_drained")
 
     status, body = request(
         f"/api/exchanges/{vhost}/{exchange}/publish",
@@ -357,6 +535,7 @@ def main():
     require_status(status, {200}, "unroutable publish")
     if decode_json(body, "unroutable publish").get("routed") is not False:
         raise AssertionFailure("RabbitMQ unexpectedly routed a message without a binding")
+    assertions.record_pass("messaging.unroutable")
 
     forbidden_queue = encode_path("forbidden.contract")
     status, _ = request(
@@ -370,6 +549,7 @@ def main():
         raise AssertionFailure(
             "RabbitMQ application user configured a queue outside its permission pattern"
         )
+    assertions.record_pass("authorization.resource_scope")
     print("RabbitMQ application permissions rejected an out-of-scope queue as expected")
 
     if lifecycle_phase == "initial":
@@ -389,46 +569,14 @@ def main():
         if decode_json(body, "lifecycle-marker publish").get("routed") is not True:
             raise AssertionFailure("RabbitMQ did not route the lifecycle-marker message")
         verify_requeued_marker("initial")
+        assertions.record_pass("persistence.lifecycle_marker")
 
     print(
         "RabbitMQ authenticated durable management-API contract passed: "
         f"phase={lifecycle_phase} exchange=dhi.exchange queue=dhi.contract "
         "delivery_mode=2 requeue=ok ack=ok persistence_marker=ready"
     )
-    passed_assertion_ids = [
-        "auth.management_ready",
-        "auth.wrong_password_rejected",
-        "auth.remote_guest_rejected",
-        "authorization.vhost_admin_denied",
-        "topology.durable_exchange",
-        "topology.durable_queues",
-        "topology.idempotent_declarations",
-        "messaging.persistent_publish",
-        "messaging.requeue",
-        "messaging.acknowledge",
-        "messaging.unroutable",
-        "authorization.resource_scope",
-        "persistence.lifecycle_marker",
-        "state.queue_drained",
-    ]
-    print(
-        "DHI_ASSERTION_SUMMARY "
-        + json.dumps(
-            {
-                "assertions": [
-                    {"id": assertion_id, "status": "pass"}
-                    for assertion_id in passed_assertion_ids
-                ],
-                "counts": {"fail": 0, "pass": len(passed_assertion_ids)},
-                "outcome": "pass",
-                "schemaVersion": 1,
-                "suite": "rabbitmq",
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        ),
-        flush=True,
-    )
+    assertions.emit()
 
 
 if __name__ == "__main__":

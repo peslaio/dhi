@@ -31,6 +31,8 @@ services:
     entrypoint: [/usr/local/bin/verify.sh]
     labels:
       io.pesla.dhi.functional.role: test
+    environment:
+      DHI_LIFECYCLE_PHASE: initial
     depends_on: [app]
     read_only: true
     volumes:

@@ -2,6 +2,18 @@
 set -eu
 
 secret=/run/secrets/mongodb-app-password
+lifecycle_phase="${DHI_LIFECYCLE_PHASE:-}"
+case "$lifecycle_phase" in
+  initial|restart)
+    ;;
+  *)
+    echo "MongoDB lifecycle phase must be exactly initial or restart" >&2
+    exit 12
+    ;;
+esac
+DHI_MONGODB_LIFECYCLE_PHASE="$lifecycle_phase"
+export DHI_MONGODB_LIFECYCLE_PHASE
+
 if [ ! -f "$secret" ] || [ ! -r "$secret" ]; then
   echo "MongoDB application password fixture is missing or unreadable" >&2
   exit 12
@@ -44,6 +56,7 @@ if /usr/bin/mongosh --quiet --norc "$app_uri" \
   exit 10
 fi
 echo "MongoDB rejected an incorrect application password as expected"
+export DHI_MONGODB_WRONG_PASSWORD_REJECTED=1
 
 if ! app_mongosh /usr/local/bin/mongodb-verify.js; then
   echo "MongoDB authenticated replica-set CRUD/index/transaction contract failed" >&2

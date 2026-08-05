@@ -36,6 +36,7 @@ services:
       io.pesla.dhi.functional.role: test
     depends_on: [app]
     environment:
+      DHI_LIFECYCLE_PHASE: initial
       HOME: /tmp
     read_only: true
     volumes:

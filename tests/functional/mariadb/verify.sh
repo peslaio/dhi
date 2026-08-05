@@ -1,6 +1,48 @@
 #!/bin/sh
 set -eu
 
+lifecycle_phase="${DHI_LIFECYCLE_PHASE-}"
+case "$lifecycle_phase" in
+  initial|restart) ;;
+  *)
+    echo "MariaDB lifecycle phase must be exactly 'initial' or 'restart', got '${lifecycle_phase:-unset}'" >&2
+    exit 10
+    ;;
+esac
+
+assertion_records=""
+assertion_ids=""
+assertion_count=0
+
+record_assertion() {
+  assertion_id="$1"
+  case "$assertion_id" in
+    ""|*[!a-z0-9._-]*)
+      echo "MariaDB verifier attempted to record an invalid assertion ID '$assertion_id'" >&2
+      exit 14
+      ;;
+  esac
+  case "|$assertion_ids|" in
+    *"|$assertion_id|"*)
+      echo "MariaDB verifier attempted to record duplicate assertion ID '$assertion_id'" >&2
+      exit 14
+      ;;
+  esac
+  assertion_ids="${assertion_ids}${assertion_ids:+|}${assertion_id}"
+  assertion_record="{\"id\":\"$assertion_id\",\"status\":\"pass\"}"
+  assertion_records="${assertion_records}${assertion_records:+,}${assertion_record}"
+  assertion_count=$((assertion_count + 1))
+}
+
+emit_assertion_summary() {
+  if [ "$assertion_count" -ne 13 ]; then
+    echo "MariaDB verifier recorded $assertion_count assertions, expected 13" >&2
+    exit 14
+  fi
+  printf 'DHI_ASSERTION_SUMMARY {"assertions":[%s],"counts":{"fail":0,"pass":%s},"outcome":"pass","schemaVersion":1,"suite":"mariadb"}\n' \
+    "$assertion_records" "$assertion_count"
+}
+
 secret=/run/secrets/mariadb-app-password
 if [ ! -f "$secret" ] || [ ! -r "$secret" ]; then
   echo "MariaDB application password fixture is missing or unreadable" >&2
@@ -45,6 +87,7 @@ until app_sql --batch --skip-column-names --execute='SELECT 1' >/dev/null 2>&1; 
   fi
   sleep 1
 done
+record_assertion auth.application_ready
 
 if mariadb --defaults-extra-file="$wrong_options" --database=dhi_contract \
   --execute='SELECT 1' >/tmp/mariadb-wrong-auth.log 2>&1; then
@@ -52,6 +95,7 @@ if mariadb --defaults-extra-file="$wrong_options" --database=dhi_contract \
   exit 10
 fi
 echo "MariaDB rejected an incorrect application password as expected"
+record_assertion auth.wrong_password_rejected
 
 if ! app_sql <<'SQL'
 CREATE TABLE IF NOT EXISTS parent_probe (
@@ -73,52 +117,44 @@ then
   echo "MariaDB authenticated schema declaration failed" >&2
   exit 10
 fi
+record_assertion schema.ddl
 
-state_summary() {
+exact_state_summary() {
   app_sql --batch --skip-column-names --execute="
 SELECT CONCAT(
-  (SELECT value FROM parent_probe WHERE id = 1), '|',
-  (SELECT COUNT(*) FROM parent_probe WHERE id = 2), '|',
-  (SELECT COUNT(*) FROM parent_probe WHERE id = 3), '|',
-  (SELECT COUNT(*) FROM parent_probe WHERE id = 4), '|',
-  (SELECT COUNT(*) FROM child_probe WHERE parent_id = 1)
+  (SELECT COUNT(*) FROM lifecycle_probe), '|',
+  COALESCE((SELECT MAX(value) FROM lifecycle_probe WHERE id = 1), ''), '|',
+  (SELECT COUNT(*) FROM parent_probe), '|',
+  (SELECT COUNT(*) FROM parent_probe WHERE id = 1 AND value = 'mariadb-app-ok'), '|',
+  (SELECT COUNT(*) FROM parent_probe WHERE id = 2 AND value = 'committed-value'), '|',
+  (SELECT COUNT(*) FROM child_probe), '|',
+  (SELECT COUNT(*) FROM child_probe WHERE id = 1 AND parent_id = 1 AND value = 'child-value')
 );
 "
 }
 
-if ! lifecycle_state="$(app_sql --batch --skip-column-names --execute="
-SELECT CONCAT(
-  COUNT(*), '|',
-  COALESCE(MAX(CASE WHEN id = 1 THEN value END), '')
-)
-FROM lifecycle_probe;
-")"; then
-  echo "MariaDB lifecycle marker inspection failed before CRUD reset" >&2
+if ! observed_state="$(exact_state_summary)"; then
+  echo "MariaDB lifecycle state inspection failed before CRUD reset" >&2
   exit 10
 fi
 
-case "$lifecycle_state" in
-  "0|")
-    lifecycle_phase=initial
-    echo "MariaDB lifecycle marker is absent on the fresh data volume as expected"
-    ;;
-  "1|mariadb-persistence-v1")
-    lifecycle_phase=restart
-    if ! persisted_summary="$(state_summary)"; then
-      echo "MariaDB persisted application-state inspection failed before CRUD reset" >&2
+case "$lifecycle_phase" in
+  initial)
+    if [ "$observed_state" != "0||0|0|0|0|0" ]; then
+      echo "MariaDB initial phase found state '$observed_state', expected an empty database state" >&2
       exit 10
     fi
-    if [ "$persisted_summary" != "mariadb-app-ok|1|0|0|1" ]; then
-      echo "MariaDB restart found persisted state '$persisted_summary', expected 'mariadb-app-ok|1|0|0|1'" >&2
+    echo "MariaDB lifecycle marker is absent on the fresh data volume as expected"
+    ;;
+  restart)
+    if [ "$observed_state" != "1|mariadb-persistence-v1|2|1|1|1|1" ]; then
+      echo "MariaDB restart found persisted state '$observed_state', expected '1|mariadb-persistence-v1|2|1|1|1|1'" >&2
       exit 10
     fi
     echo "MariaDB verified the durable lifecycle marker and application state before CRUD reset"
     ;;
-  *)
-    echo "MariaDB lifecycle marker state '$lifecycle_state' is inconsistent" >&2
-    exit 10
-    ;;
 esac
+record_assertion persistence.lifecycle_state
 
 if ! app_sql <<'SQL'
 DELETE FROM child_probe;
@@ -160,6 +196,7 @@ if app_sql --execute="INSERT INTO parent_probe (id, value) VALUES (5, 'mariadb-a
   exit 10
 fi
 echo "MariaDB unique constraint rejected duplicate data as expected"
+record_assertion constraint.unique
 
 if app_sql --execute="INSERT INTO child_probe (id, parent_id, value) VALUES (2, 999, 'orphan')" \
   >/tmp/mariadb-foreign-key.log 2>&1; then
@@ -167,6 +204,7 @@ if app_sql --execute="INSERT INTO child_probe (id, parent_id, value) VALUES (2, 
   exit 10
 fi
 echo "MariaDB foreign-key constraint rejected orphan data as expected"
+record_assertion constraint.foreign_key
 
 if app_sql --execute="CREATE USER 'dhi_forbidden'@'%' IDENTIFIED BY 'not-used'" \
   >/tmp/mariadb-privilege.log 2>&1; then
@@ -174,14 +212,21 @@ if app_sql --execute="CREATE USER 'dhi_forbidden'@'%' IDENTIFIED BY 'not-used'" 
   exit 10
 fi
 echo "MariaDB application user was denied account administration as expected"
+record_assertion authorization.account_admin_denied
 
-if ! summary="$(state_summary)"; then
+if ! summary="$(exact_state_summary)"; then
   echo "MariaDB authenticated state verification failed" >&2
   exit 10
 fi
-if [ "$summary" != "mariadb-app-ok|1|0|0|1" ]; then
-  echo "MariaDB returned state '$summary', expected 'mariadb-app-ok|1|0|0|1'" >&2
+if [ "$summary" != "1|mariadb-persistence-v1|2|1|1|1|1" ]; then
+  echo "MariaDB returned state '$summary', expected '1|mariadb-persistence-v1|2|1|1|1|1'" >&2
   exit 10
 fi
+record_assertion crud.insert_update_find
+record_assertion crud.delete
+record_assertion crud.idempotent_upsert
+record_assertion transaction.commit
+record_assertion transaction.rollback
+record_assertion state.final_summary
 printf '%s\n' "MariaDB authenticated application contract passed: phase=$lifecycle_phase state=$summary"
-printf '%s\n' 'DHI_ASSERTION_SUMMARY {"assertions":[{"id":"auth.application_ready","status":"pass"},{"id":"auth.wrong_password_rejected","status":"pass"},{"id":"schema.ddl","status":"pass"},{"id":"crud.insert_update_find","status":"pass"},{"id":"crud.delete","status":"pass"},{"id":"crud.idempotent_upsert","status":"pass"},{"id":"transaction.commit","status":"pass"},{"id":"transaction.rollback","status":"pass"},{"id":"constraint.unique","status":"pass"},{"id":"constraint.foreign_key","status":"pass"},{"id":"authorization.account_admin_denied","status":"pass"},{"id":"persistence.lifecycle_state","status":"pass"},{"id":"state.final_summary","status":"pass"}],"counts":{"fail":0,"pass":13},"outcome":"pass","schemaVersion":1,"suite":"mariadb"}'
+emit_assertion_summary

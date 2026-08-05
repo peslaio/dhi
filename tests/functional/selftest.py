@@ -8,6 +8,7 @@ import json
 import pathlib
 import re
 import subprocess
+import sys
 import tempfile
 import time
 import types
@@ -646,6 +647,63 @@ class LifecycleControllerTests(unittest.TestCase):
         )
         self.assertIn('"DHI_LIFECYCLE_PHASE=restart"', controller)
 
+    def test_stateful_persistence_suites_bind_phase_and_record_exact_contract(self):
+        functional_root = pathlib.Path(__file__).resolve().parent
+        producers = {
+            "postgresql": ("verify.sh", r"(?m)^record_assertion ([a-z0-9._-]+)$"),
+            "mariadb": ("verify.sh", r"(?m)^record_assertion ([a-z0-9._-]+)$"),
+            "mongodb": ("verify.js", r'recordPass\("([a-z0-9._-]+)"\);'),
+            "rabbitmq": (
+                "verify.py",
+                r'assertions\.record_pass\("([a-z0-9._-]+)"\)',
+            ),
+        }
+
+        for suite, (producer_name, record_pattern) in producers.items():
+            suite_root = functional_root / suite
+            contract = (suite_root / "contract.yaml").read_text(encoding="utf-8")
+            required = set(
+                re.findall(r"(?m)^  - ([a-z0-9][a-z0-9._-]*)$", contract)
+            )
+            compose = (suite_root / "compose.yaml").read_text(encoding="utf-8")
+            test_service = compose.split("\n  test:\n", 1)[1].split(
+                "\nvolumes:\n", 1
+            )[0]
+            producer = (suite_root / producer_name).read_text(encoding="utf-8")
+            recorded = set(re.findall(record_pattern, producer))
+
+            with self.subTest(suite=suite):
+                self.assertTrue(required)
+                self.assertIn("DHI_LIFECYCLE_PHASE: initial", test_service)
+                self.assertEqual(recorded, required)
+                self.assertNotIn("passedAssertionIds = [", producer)
+                self.assertNotIn(
+                    'DHI_ASSERTION_SUMMARY {"assertions":[{"id":', producer
+                )
+
+    def test_stateful_persistence_verifiers_reject_an_undeclared_phase(self):
+        functional_root = pathlib.Path(__file__).resolve().parent
+        cases = {
+            "postgresql": (["/bin/sh", "verify.sh"], 10),
+            "mariadb": (["/bin/sh", "verify.sh"], 10),
+            "mongodb": (["/bin/sh", "verify.sh"], 12),
+            "rabbitmq": ([sys.executable, "verify.py"], 10),
+        }
+        for suite, (command, expected_exit) in cases.items():
+            with self.subTest(suite=suite):
+                completed = subprocess.run(
+                    command,
+                    cwd=functional_root / suite,
+                    env={},
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+                self.assertEqual(completed.returncode, expected_exit)
+                self.assertIn("lifecycle phase", completed.stderr)
+
 
 class ScanResultTests(unittest.TestCase):
     def test_os_package_scan_evidence_is_accepted(self):
@@ -965,10 +1023,12 @@ class ReleaseArchiveTests(unittest.TestCase):
             types.SimpleNamespace(
                 returncode=0,
                 stdout=f"candidate: digest: {digest} size: 1234\n",
+                stderr="",
             ),
             types.SimpleNamespace(
                 returncode=0,
                 stdout=f"Name: candidate\nDigest: {digest}\n",
+                stderr="",
             ),
         ]
         arguments = types.SimpleNamespace(
@@ -997,6 +1057,38 @@ class ReleaseArchiveTests(unittest.TestCase):
         self.assertIn("network stalled", stderr.getvalue())
         self.assertIn("timed out after 300s", stderr.getvalue())
         self.assertIn("retrying in 15s", stderr.getvalue())
+
+    def test_registry_push_accepts_digest_reported_only_on_stderr(self):
+        digest = "sha256:" + ("d" * 64)
+        outcomes = [
+            types.SimpleNamespace(
+                returncode=0,
+                stdout="",
+                stderr=f"candidate: digest: {digest} size: 1234\n",
+            ),
+            types.SimpleNamespace(
+                returncode=0,
+                stdout=f"Name: candidate\nDigest: {digest}\n",
+                stderr="",
+            ),
+        ]
+        arguments = types.SimpleNamespace(
+            reference="ghcr.io/peslaio/redis:candidate", attempts=1
+        )
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with mock.patch.object(
+            releasectl.subprocess, "run", side_effect=outcomes
+        ) as run, mock.patch.object(
+            releasectl.sys, "stdout", new=stdout
+        ), mock.patch.object(
+            releasectl.sys, "stderr", new=stderr
+        ):
+            releasectl.command_registry_push(arguments)
+
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(stdout.getvalue(), f"{digest}\n")
+        self.assertIn(f"digest: {digest}", stderr.getvalue())
 
     def test_registry_login_retries_without_disclosing_password(self):
         password = "registry-secret-value"
@@ -1063,10 +1155,12 @@ class ReleaseArchiveTests(unittest.TestCase):
             types.SimpleNamespace(
                 returncode=0,
                 stdout=f"Name: candidate\nDigest: {stale_digest}\n",
+                stderr="",
             ),
             types.SimpleNamespace(
                 returncode=0,
                 stdout=f"Name: candidate\nDigest: {digest}\n",
+                stderr="",
             ),
         ]
         arguments = types.SimpleNamespace(
@@ -1091,7 +1185,7 @@ class ReleaseArchiveTests(unittest.TestCase):
 
     def test_registry_raw_inspect_retries_malformed_json(self):
         outcomes = [
-            types.SimpleNamespace(returncode=0, stdout="{"),
+            types.SimpleNamespace(returncode=0, stdout="{", stderr=""),
             types.SimpleNamespace(
                 returncode=0,
                 stdout='{"schemaVersion":2,"manifests":[]}\n',
@@ -2120,6 +2214,57 @@ end
         for workflow in (architecture_publisher, manifest_publisher):
             self.assertNotIn("docker/login-action", workflow)
             self.assertNotRegex(workflow, r"(?m)^\s+docker push ")
+
+    def test_every_release_registry_login_has_a_final_logout(self):
+        workflow_dir = (
+            pathlib.Path(__file__).resolve().parents[2]
+            / ".github"
+            / "workflows"
+        )
+        job_pattern = re.compile(
+            r"(?ms)^  ([a-z][a-z0-9-]+):\n(.*?)(?=^  [a-z][a-z0-9-]+:\n|\Z)"
+        )
+        login_pattern = re.compile(
+            r"(?m)^      - name: Log in to registry(?: for candidate pull)?\n"
+            r"        id: ([a-z][a-z0-9_]*)$"
+        )
+        logout_pattern = re.compile(
+            r"(?m)^      - name: Log out of registry\n"
+            r"        if: \$\{\{ always\(\) && steps\.([a-z][a-z0-9_]*)"
+            r"\.outcome == 'success' \}\}$"
+        )
+        paired_login_ids = []
+
+        for workflow_name in self.PUBLISHER_WORKFLOWS:
+            workflow = (workflow_dir / workflow_name).read_text(encoding="utf-8")
+            for job_name, job in job_pattern.findall(workflow):
+                login_calls = job.count("releasectl.py registry-login")
+                if login_calls == 0:
+                    self.assertNotIn("docker logout", job)
+                    continue
+                with self.subTest(workflow=workflow_name, job=job_name):
+                    login_ids = login_pattern.findall(job)
+                    logout_ids = logout_pattern.findall(job)
+                    self.assertEqual(login_calls, 1)
+                    self.assertEqual(login_ids, logout_ids)
+                    self.assertEqual(len(login_ids), 1)
+                    self.assertEqual(job.count('docker logout "$REGISTRY"'), 1)
+                    self.assertTrue(
+                        job.rstrip().endswith('docker logout "$REGISTRY"')
+                    )
+                    paired_login_ids.extend(login_ids)
+
+        self.assertEqual(
+            set(paired_login_ids),
+            {
+                "candidate_registry_login",
+                "architecture_acceptance_registry_login",
+                "manifest_candidate_registry_login",
+                "index_acceptance_registry_login",
+                "promotion_registry_login",
+            },
+        )
+        self.assertEqual(len(paired_login_ids), 5)
 
     def test_write_permissions_and_operations_are_confined_to_release_graph(self):
         root = pathlib.Path(__file__).resolve().parents[2]

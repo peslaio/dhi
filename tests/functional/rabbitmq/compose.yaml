@@ -33,6 +33,8 @@ services:
     labels:
       io.pesla.dhi.functional.role: test
     depends_on: [app]
+    environment:
+      DHI_LIFECYCLE_PHASE: initial
     read_only: true
     volumes:
       - ./verify.py:/harness/rabbitmq_verify.py:ro

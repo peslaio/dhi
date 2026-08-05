@@ -126,7 +126,7 @@ def registry_retry(
             failure = f"timed out after {timeout_seconds}s"
         else:
             stdout = completed.stdout or ""
-            stderr = getattr(completed, "stderr", "") or ""
+            stderr = completed.stderr or ""
             failure = None
             validated = stdout
             if completed.returncode == 0:

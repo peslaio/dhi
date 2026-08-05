@@ -127,6 +127,7 @@ jobs:
           fi
 
       - name: Log in to registry
+        id: candidate_registry_login
         env:
           REGISTRY: ${{ inputs.registry }}
           REGISTRY_USERNAME: ${{ secrets.registry_username || github.actor }}
@@ -218,6 +219,14 @@ jobs:
           retention-days: 1
           compression-level: 0
 
+      - name: Log out of registry
+        if: ${{ always() && steps.candidate_registry_login.outcome == 'success' }}
+        env:
+          REGISTRY: ${{ inputs.registry }}
+        run: |
+          set -euo pipefail
+          docker logout "$REGISTRY"
+
   accept-candidate-architecture:
     needs: [prepare, publish-candidate-architecture]
     permissions:
@@ -267,6 +276,7 @@ jobs:
             --run-attempt "$GITHUB_RUN_ATTEMPT"
 
       - name: Log in to registry for candidate pull
+        id: architecture_acceptance_registry_login
         env:
           REGISTRY: ${{ inputs.registry }}
           REGISTRY_USERNAME: ${{ secrets.registry_username || github.actor }}
@@ -344,6 +354,14 @@ jobs:
           path: ${{ runner.temp }}/candidate-functional
           if-no-files-found: error
           retention-days: 7
+
+      - name: Log out of registry
+        if: ${{ always() && steps.architecture_acceptance_registry_login.outcome == 'success' }}
+        env:
+          REGISTRY: ${{ inputs.registry }}
+        run: |
+          set -euo pipefail
+          docker logout "$REGISTRY"
 
   record-accepted-architecture:
     needs: [prepare, accept-candidate-architecture]
